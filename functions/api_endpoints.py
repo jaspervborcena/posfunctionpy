@@ -7,6 +7,9 @@ from urllib.parse import quote
 # Import configuration 
 from config import SUPABASE_URL, get_supabase_headers, DEFAULT_HEADERS
 
+# Import authentication middleware
+from auth_middleware import require_auth, require_store_access, get_user_info
+
 def parse_date_string(date_str):
     """
     Parse date string in either YYYYMMDD or YYYY-MM-DD format
@@ -68,6 +71,8 @@ def validate_date_range(from_date_str, to_date_str):
 
 # API endpoint to get orders by storeId
 @https_fn.on_request(region="asia-east1")
+@require_auth
+@require_store_access
 def get_orders_by_store(req: https_fn.Request) -> https_fn.Response:
     """Get all orders for a specific store ID"""
     
@@ -76,7 +81,7 @@ def get_orders_by_store(req: https_fn.Request) -> https_fn.Response:
         headers = {
             'Access-Control-Allow-Origin': '*',
             'Access-Control-Allow-Methods': 'GET',
-            'Access-Control-Allow-Headers': 'Content-Type',
+            'Access-Control-Allow-Headers': 'Content-Type, Authorization',
             'Access-Control-Max-Age': '3600'
         }
         return https_fn.Response('', status=204, headers=headers)
@@ -186,6 +191,8 @@ def get_orders_by_store(req: https_fn.Request) -> https_fn.Response:
 
 # API endpoint to get order details by storeId and orderId
 @https_fn.on_request(region="asia-east1")
+@require_auth
+@require_store_access
 def get_order_details(req: https_fn.Request) -> https_fn.Response:
     """Get order details for a specific store and order"""
     
@@ -194,7 +201,7 @@ def get_order_details(req: https_fn.Request) -> https_fn.Response:
         headers = {
             'Access-Control-Allow-Origin': '*',
             'Access-Control-Allow-Methods': 'GET',
-            'Access-Control-Allow-Headers': 'Content-Type',
+            'Access-Control-Allow-Headers': 'Content-Type, Authorization',
             'Access-Control-Max-Age': '3600'
         }
         return https_fn.Response('', status=204, headers=headers)
@@ -359,6 +366,7 @@ def get_order_details(req: https_fn.Request) -> https_fn.Response:
         )
 # API endpoint to get orders by date range
 @https_fn.on_request(region="asia-east1")
+@require_auth
 def get_orders_by_date(req: https_fn.Request) -> https_fn.Response:
     """Get orders filtered by date range with optional store filter
     
@@ -377,7 +385,7 @@ def get_orders_by_date(req: https_fn.Request) -> https_fn.Response:
         headers = {
             'Access-Control-Allow-Origin': '*',
             'Access-Control-Allow-Methods': 'GET',
-            'Access-Control-Allow-Headers': 'Content-Type',
+            'Access-Control-Allow-Headers': 'Content-Type, Authorization',
             'Access-Control-Max-Age': '3600'
         }
         return https_fn.Response('', status=204, headers=headers)
@@ -411,6 +419,23 @@ def get_orders_by_date(req: https_fn.Request) -> https_fn.Response:
             status=400,
             headers={"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
         )
+    
+    # Validate store access if storeId is provided
+    if store_id:
+        from auth_middleware import check_store_access
+        has_access, access_error = check_store_access(req.user, store_id)
+        if not has_access:
+            return https_fn.Response(
+                json.dumps({
+                    "success": False,
+                    "error": "Access denied",
+                    "message": access_error,
+                    "requested_store": store_id,
+                    "user_store": req.user.get('permissions', {}).get('storeId')
+                }),
+                status=403,
+                headers={"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
+            )
     
     headers = get_supabase_headers()
     
@@ -506,3 +531,4 @@ def get_orders_by_date(req: https_fn.Request) -> https_fn.Response:
             status=500,
             headers={"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
         )
+

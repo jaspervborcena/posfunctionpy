@@ -54,12 +54,8 @@ def sync_order_to_supabase(event: firestore_fn.Event[firestore_fn.DocumentSnapsh
     payload = {k: v for k, v in payload.items() if v is not None}
     print(f"🧹 Cleaned payload (non-null values): {payload}")
 
-    headers = {
-        "apikey": SUPABASE_ANON_KEY,
-        "Authorization": f"Bearer {SUPABASE_SECRET_KEY}",
-        "Content-Type": "application/json",
-        "Prefer": "return=representation"
-    }
+    headers = get_supabase_headers()
+    headers["Prefer"] = "return=representation"
 
     print(f"📤 Sending payload to Supabase: {payload}")
 
@@ -122,12 +118,8 @@ def sync_order_details_to_supabase(event: firestore_fn.Event[firestore_fn.Docume
             print("⚠️ Warning: No items found in the document!")
             return
 
-        headers = {
-            "apikey": SUPABASE_ANON_KEY,
-            "Authorization": f"Bearer {SUPABASE_SECRET_KEY}",
-            "Content-Type": "application/json",
-            "Prefer": "return=representation"
-        }
+        headers = get_supabase_headers()
+        headers["Prefer"] = "return=representation"
 
         # Process each item in the items array
         successful_inserts = 0
