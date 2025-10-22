@@ -1,16 +1,16 @@
 # Configuration constants for the Firebase Functions project
 
-# Supabase Configuration  
-SUPABASE_URL = "https://etwbbynzpgdsxdxuiasl.supabase.co"
-SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImV0d2JieW56cGdkc3hkeHVpYXNsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTg1MTY4NTQsImV4cCI6MjA3NDA5Mjg1NH0.vNd1B_xxbOo5JnUkKfgflwikIA9tz2T7ym4mQWlCUJ0"
-SUPABASE_SECRET_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImV0d2JieW56cGdkc3hkeHVpYXNsIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1ODUxNjg1NCwiZXhwIjoyMDc0MDkyODU0fQ.b9ELJBIQReCvGiUCVPXC0kQgZ_nAaXuTqaVsVZT2LSQ"
+# BigQuery Configuration
+BIGQUERY_PROJECT_ID = "jasperpos-1dfd5"
+BIGQUERY_DATASET_ID = "tovrika_pos"
+BIGQUERY_LOCATION = "asia-east1"  # Same region as your Firebase Functions
 
 # Firebase Configuration
 FIREBASE_REGION = "asia-east1"
 
-# Database Table Names
-ORDERS_TABLE = "orders"
-ORDER_DETAILS_TABLE = "order_details"
+# BigQuery Table Names
+BIGQUERY_ORDERS_TABLE = f"{BIGQUERY_PROJECT_ID}.{BIGQUERY_DATASET_ID}.orders"
+BIGQUERY_ORDER_DETAILS_TABLE = f"{BIGQUERY_PROJECT_ID}.{BIGQUERY_DATASET_ID}.order_details"
 
 # Collection Names (Firestore)
 ORDERS_COLLECTION = "orders"
@@ -24,11 +24,12 @@ DEFAULT_HEADERS = {
     "Content-Type": "application/json"
 }
 
-# Supabase Request Headers Template
-def get_supabase_headers():
-    return {
-        "apikey": SUPABASE_ANON_KEY,
-        "Authorization": f"Bearer {SUPABASE_SECRET_KEY}",
-        "Content-Type": "application/json",
-        "Prefer": "return=representation"
-    }
+# BigQuery Client Helper
+def get_bigquery_client():
+    """Get BigQuery client instance"""
+    try:
+        from google.cloud import bigquery
+        return bigquery.Client(project=BIGQUERY_PROJECT_ID, location=BIGQUERY_LOCATION)
+    except ImportError:
+        print("WARNING: BigQuery library not available")
+        return None
