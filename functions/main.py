@@ -5,7 +5,7 @@ from firebase_admin import initialize_app
 initialize_app()
 
 # Import BigQuery modules
-from bigquery_api_endpoints import get_orders_by_store_bq, get_order_details_bq, get_orders_by_date_bq
+from bigquery_api_endpoints import get_orders_by_store_bq, get_order_details_bq, get_orders_by_date_bq, get_sales_summary_bq
 from bigquery_triggers import sync_order_to_bigquery, sync_order_details_to_bigquery
 from app_logs import app_logs
 from reconciliation import reconcile_daily, reconcile_on_demand
@@ -25,6 +25,7 @@ def on_request_example(req: https_fn.Request) -> https_fn.Response:
 # - get_orders_by_store_bq: Get orders by store from BigQuery  
 # - get_order_details_bq: Get order details by store and order from BigQuery
 # - get_orders_by_date_bq: Get orders by date range from BigQuery
+# - get_sales_summary_bq: Get sales summary with aggregated data (defaults to today)
 # - sync_order_to_bigquery: Firestore trigger to sync orders to BigQuery
 # - sync_order_details_to_bigquery: Firestore trigger to sync order details to BigQuery
 #
