@@ -7,6 +7,9 @@ initialize_app()
 # Import BigQuery modules
 from bigquery_api_endpoints import get_orders_by_store_bq, get_order_details_bq, get_orders_by_date_bq
 from bigquery_triggers import sync_order_to_bigquery, sync_order_details_to_bigquery
+from app_logs import app_logs
+from reconciliation import reconcile_daily, reconcile_on_demand
+from paypal_endpoints import paypal_create_order, paypal_capture_order
 
 # Testing and utilities
 from test_auth import test_auth_basic, test_auth_store
@@ -29,3 +32,6 @@ def on_request_example(req: https_fn.Request) -> https_fn.Response:
 # - test_auth_basic: Test basic authentication
 # - test_auth_store: Test store access authentication  
 # - on_request_example: Basic test endpoint
+# - reconcile_daily: Scheduled reconciliation (2AM Asia/Manila)
+# - reconcile_on_demand: Callable function to reconcile by company/store
+# - paypal_create_order / paypal_capture_order: PayPal sandbox endpoints
