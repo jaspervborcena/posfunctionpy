@@ -66,13 +66,15 @@ def insert_product_inventory_bq(req: https_fn.Request) -> https_fn.Response:
         from auth_middleware import check_store_access
         has_access, access_error = check_store_access(req.user, data.get('storeId'))
         if not has_access:
+            from auth_middleware import extract_user_permissions
+            perms = extract_user_permissions(req.user)
             return https_fn.Response(
                 json.dumps({
                     "success": False,
                     "error": "Access denied",
                     "message": access_error,
                     "requested_store": data.get('storeId'),
-                    "user_store": req.user.get('permissions', {}).get('storeId')
+                    "user_store": perms.get('storeId')
                 }),
                 status=403,
                 headers=DEFAULT_HEADERS

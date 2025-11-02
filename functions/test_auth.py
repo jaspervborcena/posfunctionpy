@@ -2,7 +2,7 @@ from firebase_functions import https_fn
 import json
 
 # Import authentication middleware
-from auth_middleware import require_auth, require_store_access, get_user_info
+from auth_middleware import require_auth, require_store_access, get_user_info, extract_user_permissions
 
 # Test endpoint to verify authentication is working
 @https_fn.on_request(region="asia-east1")
@@ -21,7 +21,8 @@ def test_auth_basic(req: https_fn.Request) -> https_fn.Response:
         return https_fn.Response('', status=204, headers=headers)
     
     user = get_user_info(req)
-    
+    perms = extract_user_permissions(user)
+
     return https_fn.Response(
         json.dumps({
             "success": True,
@@ -32,9 +33,9 @@ def test_auth_basic(req: https_fn.Request) -> https_fn.Response:
                 "email": user.get('email'),
                 "status": user.get('status'),
                 "permissions": user.get('permissions', {}),
-                "company_id": user.get('permissions', {}).get('companyId'),
-                "store_id": user.get('permissions', {}).get('storeId'),
-                "role_id": user.get('permissions', {}).get('roleId')
+                "company_id": perms.get('companyId'),
+                "store_id": perms.get('storeId'),
+                "role_id": perms.get('roleId')
             },
             "timestamp": req.headers.get('X-Request-Time', 'Not provided')
         }),
@@ -61,7 +62,8 @@ def test_auth_store(req: https_fn.Request) -> https_fn.Response:
     
     user = get_user_info(req)
     store_id = req.args.get('storeId') or req.args.get('store_id')
-    
+    perms = extract_user_permissions(user)
+
     return https_fn.Response(
         json.dumps({
             "success": True,
@@ -70,9 +72,9 @@ def test_auth_store(req: https_fn.Request) -> https_fn.Response:
                 "uid": user.get('uid'),
                 "display_name": user.get('displayName'),
                 "email": user.get('email'),
-                "user_store_id": user.get('permissions', {}).get('storeId'),
+                "user_store_id": perms.get('storeId'),
                 "requested_store_id": store_id,
-                "role_id": user.get('permissions', {}).get('roleId')
+                "role_id": perms.get('roleId')
             },
             "access_granted": True,
             "timestamp": req.headers.get('X-Request-Time', 'Not provided')

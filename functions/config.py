@@ -11,10 +11,58 @@ FIREBASE_REGION = "asia-east1"
 # BigQuery Table Names
 BIGQUERY_ORDERS_TABLE = f"{BIGQUERY_PROJECT_ID}.{BIGQUERY_DATASET_ID}.orders"
 BIGQUERY_ORDER_DETAILS_TABLE = f"{BIGQUERY_PROJECT_ID}.{BIGQUERY_DATASET_ID}.order_details"
+# BigQuery products table (matches Firestore `products` collection)
+BIGQUERY_PRODUCTS_TABLE = f"{BIGQUERY_PROJECT_ID}.{BIGQUERY_DATASET_ID}.products"
 
 # Collection Names (Firestore)
 ORDERS_COLLECTION = "orders"
 ORDER_DETAILS_COLLECTION = "orderDetails"
+
+# Standardized names / aliases to help find resources quickly
+BQ_TABLES = {
+    "orders": BIGQUERY_ORDERS_TABLE,
+    "order_details": BIGQUERY_ORDER_DETAILS_TABLE,
+    "products": BIGQUERY_PRODUCTS_TABLE
+}
+
+# Firestore collection name constants (already present but normalized)
+COLLECTIONS = {
+    "orders": ORDERS_COLLECTION,
+    "orderDetails": ORDER_DETAILS_COLLECTION,
+    "products": "products"
+}
+
+# Canonical BigQuery field names mapping (logical -> actual column name)
+# Use these to standardize payload keys when inserting into BigQuery.
+# Keys are grouped by resource type.
+BQ_FIELD_NAMES = {
+    "products": {
+        "product_id": "productId",
+        "barcode_id": "barcodeId",
+        "category": "category",
+        "company_id": "companyId",
+        "created_at": "createdAt",
+        "created_by": "createdBy",
+        "description": "description",
+        "discount_type": "discountType",
+        "discount_value": "discountValue",
+        "has_discount": "hasDiscount",
+        "image_url": "imageUrl",
+        "is_favorite": "isFavorite",
+        "is_vat_applicable": "isVatApplicable",
+        "product_code": "productCode",
+        "product_name": "productName",
+        "selling_price": "sellingPrice",
+        "sku_id": "skuId",
+        "status": "status",
+        "store_id": "storeId",
+        "total_stock": "totalStock",
+        "uid": "uid",
+        "unit_type": "unitType",
+        "updated_at": "updatedAt",
+        "updated_by": "updatedBy"
+    }
+}
 
 # API Response Headers
 DEFAULT_HEADERS = {
@@ -33,3 +81,11 @@ def get_bigquery_client():
     except ImportError:
         print("WARNING: BigQuery library not available")
         return None
+
+
+# Backfill presets for products (key -> (start_iso, end_iso))
+# Update this mapping to add or change preset ranges used by the manual backfill trigger
+BACKFILL_PRESETS = {
+    "20251001_20251031": ("2025-10-01", "2025-10-31"),
+    "oct2025": ("2025-10-01", "2025-10-31")
+}
