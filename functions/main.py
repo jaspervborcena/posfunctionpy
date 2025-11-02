@@ -5,15 +5,15 @@ from firebase_admin import initialize_app
 initialize_app()
 
 # Import BigQuery modules
-from bigquery_api_endpoints import get_orders_by_store_bq, get_order_details_bq, get_orders_by_date_bq, get_sales_summary_bq
-from bigquery_triggers import sync_order_to_bigquery, sync_order_details_to_bigquery
+from bigquery_api_endpoints import get_orders_by_store_bq, get_order_details_bq, get_orders_by_date_bq, get_sales_summary_bq, get_products_bq, backfill_products_bq, backfill_orders_bq, backfill_order_details_bq
+from bigquery_triggers import sync_order_to_bigquery, sync_order_details_to_bigquery, sync_products_to_bigquery, sync_products_to_bigquery_streaming, sync_products_to_bigquery_update, sync_products_to_bigquery_delete, sync_order_to_bigquery_update, sync_order_to_bigquery_delete, sync_order_details_to_bigquery_update, sync_order_details_to_bigquery_delete
 from app_logs import app_logs
 from reconciliation import reconcile_daily, reconcile_on_demand
 from paypal_endpoints import paypal_create_order, paypal_capture_order
 from product_inventory_api import insert_product_inventory_bq, get_product_inventory_bq
 
 # Products APIs (Firestore)  
-from products_api import insert_product, get_products, update_product
+from products_api import insert_product, update_product
 
 # Testing and utilities
 from test_auth import test_auth_basic, test_auth_store
@@ -37,7 +37,7 @@ def on_request_example(req: https_fn.Request) -> https_fn.Response:
 #
 # PRODUCTS APIs (FIRESTORE):
 # - insert_product: Insert new product to Firestore products collection
-# - get_products: Get products by store with filtering options
+# - get_products: DEPRECATED (use BigQuery `get_products_bq`)
 # - update_product: Update existing product in Firestore
 #
 # TESTING & UTILITIES:

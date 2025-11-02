@@ -10,7 +10,7 @@ from datetime import datetime
 from auth_middleware import require_auth
 from typing import Dict, Any
 
-@https_fn.on_request(cors=True)
+@https_fn.on_request(cors=True, region="asia-east1")
 @require_auth
 def insert_product(req: https_fn.Request) -> https_fn.Response:
     """
@@ -158,132 +158,19 @@ def insert_product(req: https_fn.Request) -> https_fn.Response:
         )
 
 
-@https_fn.on_request(cors=True)
-@require_auth
-def get_products(req: https_fn.Request) -> https_fn.Response:
-    """
-    Get products from Firestore with filtering options
-    Requires Firebase authentication and respects store access
-    
-    Query parameters:
-    - storeId: Filter by store ID (required - user must have access)
-    - category: Filter by product category
-    - status: Filter by status (active/inactive)
-    - productCode: Filter by specific product code
-    - skuId: Filter by SKU ID
-    - isFavorite: Filter by favorite status (true/false)
-    - hasDiscount: Filter by discount availability (true/false)
-    - limit: Maximum number of results (default: 100)
-    """
-    
-    if req.method != 'GET':
-        return https_fn.Response(
-            json.dumps({"error": "Method not allowed"}), 
-            status=405, 
-            headers={"Content-Type": "application/json"}
-        )
-    
-    try:
-        # Initialize Firestore client
-        db = firestore.client()
-        
-        # Get query parameters
-        store_id = req.args.get('storeId')
-        category = req.args.get('category')
-        status = req.args.get('status')
-        product_code = req.args.get('productCode')
-        sku_id = req.args.get('skuId')
-        is_favorite = req.args.get('isFavorite')
-        has_discount = req.args.get('hasDiscount')
-        limit = int(req.args.get('limit', 100))
-        
-        # Validate store access
-        user_info = getattr(req, 'user_info', {})
-        user_stores = user_info.get('stores', [])
-        
-        if not store_id:
-            return https_fn.Response(
-                json.dumps({"error": "storeId parameter is required"}),
-                status=400,
-                headers={"Content-Type": "application/json"}
-            )
-        
-        if store_id not in user_stores:
-            return https_fn.Response(
-                json.dumps({"error": "Access denied to this store"}),
-                status=403,
-                headers={"Content-Type": "application/json"}
-            )
-        
-        # Build Firestore query
-        query = db.collection('products').where('storeId', '==', store_id)
-        
-        # Apply filters
-        if category:
-            query = query.where('category', '==', category)
-        
-        if status:
-            query = query.where('status', '==', status)
-        
-        if product_code:
-            query = query.where('productCode', '==', product_code)
-        
-        if sku_id:
-            query = query.where('skuId', '==', sku_id)
-        
-        if is_favorite is not None:
-            is_fav_bool = is_favorite.lower() == 'true'
-            query = query.where('isFavorite', '==', is_fav_bool)
-        
-        if has_discount is not None:
-            has_disc_bool = has_discount.lower() == 'true'
-            query = query.where('hasDiscount', '==', has_disc_bool)
-        
-        # Apply limit and execute query
-        query = query.limit(limit)
-        docs = query.stream()
-        
-        # Process results
-        products = []
-        for doc in docs:
-            product_data = doc.to_dict()
-            product_data['id'] = doc.id
-            
-            # Convert Firestore timestamps to strings for JSON response
-            if 'createdAt' in product_data and product_data['createdAt']:
-                try:
-                    product_data['createdAt'] = product_data['createdAt'].isoformat()
-                except:
-                    product_data['createdAt'] = str(product_data['createdAt'])
-            
-            if 'updatedAt' in product_data and product_data['updatedAt']:
-                try:
-                    product_data['updatedAt'] = product_data['updatedAt'].isoformat()
-                except:
-                    product_data['updatedAt'] = str(product_data['updatedAt'])
-            
-            products.append(product_data)
-        
-        return https_fn.Response(
-            json.dumps({
-                "success": True,
-                "count": len(products),
-                "data": products
-            }),
-            status=200,
-            headers={"Content-Type": "application/json"}
-        )
-        
-    except Exception as e:
-        print(f"Error getting products: {str(e)}")
-        return https_fn.Response(
-            json.dumps({"error": f"Failed to get products: {str(e)}"}),
-            status=500,
-            headers={"Content-Type": "application/json"}
-        )
+# NOTE: Firestore-backed `get_products` endpoint removed. Use BigQuery-backed
+# `get_products_bq` in `bigquery_api_endpoints.py` for product reads. We intentionally
+# do not register a Firestore GET endpoint here to ensure all GET traffic goes
+# through the BigQuery API for consistency and performance.
+
+# NOTE: The Firestore-backed `get_products` endpoint has been deprecated in this
+# project in favor of the BigQuery-backed `get_products_bq` API which provides
+# analytics-ready queries and better performance for reads. If you intentionally
+# want to re-enable Firestore reads, re-add a function here. For now, use
+# `get_products_bq` defined in `bigquery_api_endpoints.py`.
 
 
-@https_fn.on_request(cors=True)
+@https_fn.on_request(cors=True, region="asia-east1")
 @require_auth
 def update_product(req: https_fn.Request) -> https_fn.Response:
     """
