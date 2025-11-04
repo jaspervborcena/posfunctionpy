@@ -98,6 +98,17 @@ def sync_order_to_bigquery(event: firestore_fn.Event[firestore_fn.DocumentSnapsh
     try:
         client = get_bigquery_client()
         
+        # Check if orderId already exists in BigQuery
+        check_query = f"SELECT COUNT(*) as count FROM `{BIGQUERY_ORDERS_TABLE}` WHERE orderId = @orderId"
+        check_params = [bigquery.ScalarQueryParameter("orderId", "STRING", order_id)]
+        check_job_config = bigquery.QueryJobConfig(query_parameters=check_params)
+        check_job = client.query(check_query, job_config=check_job_config)
+        result = list(check_job.result())
+        
+        if result[0].count > 0:
+            print(f"⏭️ Order {order_id} already exists in BigQuery - skipping duplicate insert")
+            return
+        
         # Prepare payload for BigQuery (matching your schema)
         payload = {
             "assignedCashierEmail": data.get("assignedCashierEmail"),
@@ -401,7 +412,7 @@ def sync_order_details_to_bigquery(event: firestore_fn.Event[firestore_fn.Docume
     data = event.data.to_dict()
 
     print(f"📄 Order Detail ID: {order_detail_id}")
-    print(f"� Order Detail data: {data}")
+    print(f"📦 Order Detail data: {data}")
     print(f"📋 Available fields: {list(data.keys()) if data else 'No fields'}")
 
     if not data:
@@ -410,6 +421,17 @@ def sync_order_details_to_bigquery(event: firestore_fn.Event[firestore_fn.Docume
 
     try:
         client = get_bigquery_client()
+
+        # Check if orderDetailsId already exists in BigQuery
+        check_query = f"SELECT COUNT(*) as count FROM `{BIGQUERY_ORDER_DETAILS_TABLE}` WHERE orderDetailsId = @orderDetailsId"
+        check_params = [bigquery.ScalarQueryParameter("orderDetailsId", "STRING", order_detail_id)]
+        check_job_config = bigquery.QueryJobConfig(query_parameters=check_params)
+        check_job = client.query(check_query, job_config=check_job_config)
+        result = list(check_job.result())
+        
+        if result[0].count > 0:
+            print(f"⏭️ OrderDetails {order_detail_id} already exists in BigQuery - skipping duplicate insert")
+            return
 
         # Build payload using centralized helper to standardize column names
         from bq_helpers import build_orderdetails_payload
@@ -538,6 +560,17 @@ def sync_products_to_bigquery(event: firestore_fn.Event[firestore_fn.DocumentSna
             print(f"⚠️ Warning checking createdAt for recency: {e} — continuing with sync")
 
         client = get_bigquery_client()
+
+        # Check if productId already exists in BigQuery
+        check_query = f"SELECT COUNT(*) as count FROM `{BIGQUERY_PRODUCTS_TABLE}` WHERE productId = @productId"
+        check_params = [bigquery.ScalarQueryParameter("productId", "STRING", product_id)]
+        check_job_config = bigquery.QueryJobConfig(query_parameters=check_params)
+        check_job = client.query(check_query, job_config=check_job_config)
+        result = list(check_job.result())
+        
+        if result[0].count > 0:
+            print(f"⏭️ Product {product_id} already exists in BigQuery - skipping duplicate insert")
+            return
 
         # Build payload using centralized helper to standardize column names
         payload = build_product_payload(product_id, data)
