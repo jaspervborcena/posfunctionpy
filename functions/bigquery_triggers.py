@@ -268,22 +268,39 @@ def sync_order_to_bigquery(event: firestore_fn.Event[firestore_fn.DocumentSnapsh
         print(f"❌ Unexpected error syncing to BigQuery: {e}")
 
 
-# Orders update handler: delete existing row then re-insert updated payload
+# Orders update handler: COMPLETE field update using MERGE (updates ALL fields from Firestore)
 @firestore_fn.on_document_updated(document="orders/{orderId}", region="asia-east1")
 def sync_order_to_bigquery_update(event: firestore_fn.Event[firestore_fn.DocumentSnapshot]) -> None:
     print("🔁 Firestore trigger activated for updated order - BigQuery sync")
     try:
         order_id = event.params.get("orderId")
-        after = event.data.to_dict()
+        after = event.data.after.to_dict()
 
         print(f"📄 Order ID (updated): {order_id}")
-        print(f"📦 New order data: {after}")
+        print(f"📦 New order data (ALL FIELDS): {after}")
+        print(f"📋 Updating ALL fields for orderId: {order_id}")
 
         if not after:
             print("⚠️ Warning: Updated order document empty — skipping")
             return
+        
+        if not order_id:
+            print("⚠️ Warning: Order ID is missing — skipping")
+            return
 
         client = get_bigquery_client()
+        
+        # Verify the order exists in BigQuery before updating
+        check_query = f"SELECT COUNT(*) as count FROM `{BIGQUERY_ORDERS_TABLE}` WHERE orderId = @orderId"
+        check_params = [bigquery.ScalarQueryParameter("orderId", "STRING", order_id)]
+        check_job_config = bigquery.QueryJobConfig(query_parameters=check_params)
+        check_job = client.query(check_query, job_config=check_job_config)
+        result = list(check_job.result())
+        
+        if result[0].count == 0:
+            print(f"⚠️ Order {order_id} does not exist in BigQuery - creating new record instead of update")
+        else:
+            print(f"✅ Order {order_id} exists in BigQuery - proceeding with complete field update")
 
         # Use MERGE to upsert the updated order (idempotent)
         try:
@@ -455,22 +472,39 @@ def sync_order_details_to_bigquery(event: firestore_fn.Event[firestore_fn.Docume
         print(f"❌ Unexpected error syncing orderDetails to BigQuery: {e}")
 
 
-# OrderDetails update handler: delete existing row (if any) then re-insert the full payload
+# OrderDetails update handler: DELETE + INSERT complete payload (updates ALL fields from Firestore)
 @firestore_fn.on_document_updated(document="orderDetails/{orderDetailsId}", region="asia-east1")
 def sync_order_details_update(event: firestore_fn.Event[firestore_fn.DocumentSnapshot]) -> None:
     print("🔁 Firestore trigger activated for updated orderDetails - BigQuery sync")
     try:
         order_detail_id = event.params.get("orderDetailsId")
-        after = event.data.to_dict()
+        after = event.data.after.to_dict()
 
         print(f"📄 Order Detail ID (updated): {order_detail_id}")
-        print(f"📦 New order detail data: {after}")
+        print(f"📦 New order detail data (ALL FIELDS): {after}")
+        print(f"📋 Updating ALL fields for orderDetailsId: {order_detail_id}")
 
         if not after:
             print("⚠️ Warning: Updated orderDetails document empty — skipping")
             return
+            
+        if not order_detail_id:
+            print("⚠️ Warning: OrderDetails ID is missing — skipping")
+            return
 
         client = get_bigquery_client()
+        
+        # Verify the orderDetails exists before updating
+        check_query = f"SELECT COUNT(*) as count FROM `{BIGQUERY_ORDER_DETAILS_TABLE}` WHERE orderDetailsId = @orderDetailsId"
+        check_params = [bigquery.ScalarQueryParameter("orderDetailsId", "STRING", order_detail_id)]
+        check_job_config = bigquery.QueryJobConfig(query_parameters=check_params)
+        check_job = client.query(check_query, job_config=check_job_config)
+        result = list(check_job.result())
+        
+        if result[0].count == 0:
+            print(f"⚠️ OrderDetails {order_detail_id} does not exist in BigQuery - will create new record")
+        else:
+            print(f"✅ OrderDetails {order_detail_id} exists in BigQuery - proceeding with complete replacement")
 
         # Delete existing row if present
         try:
@@ -641,28 +675,45 @@ def sync_products_to_bigquery(event: firestore_fn.Event[firestore_fn.DocumentSna
 # The main sync_products_to_bigquery function handles both MERGE and fallback streaming insert
 
 
-# BigQuery trigger for updated product documents
+# Products update handler: COMPLETE field update using MERGE (updates ALL fields from Firestore)
 @firestore_fn.on_document_updated(document="products/{productId}", region="asia-east1")
 def sync_products_to_bigquery_update(event: firestore_fn.Event[firestore_fn.DocumentSnapshot]) -> None:
     """Sync updated Firestore product documents into BigQuery (MERGE -> update existing row).
 
-    This performs a MERGE that updates the row when matched and inserts when not matched
-    (idempotent)."""
+    This performs a MERGE that updates ALL FIELDS when matched and inserts when not matched
+    (idempotent and comprehensive)."""
     print("🔁 Firestore trigger activated for updated product - BigQuery sync")
 
     try:
         product_id = event.params.get("productId")
-        # event.data has before/after; use after
-        after = event.data.to_dict()
+        # event.data has before/after; use after (complete document state)
+        after = event.data.after.to_dict()
 
         print(f"📄 Product Document ID (updated): {product_id}")
-        print(f"📦 New product data: {after}")
+        print(f"📦 New product data (ALL FIELDS): {after}")
+        print(f"📋 Updating ALL fields for productId: {product_id}")
 
         if not after:
             print("⚠️ Warning: Updated product document has no data — skipping")
             return
+            
+        if not product_id:
+            print("⚠️ Warning: Product ID is missing — skipping")
+            return
 
         client = get_bigquery_client()
+        
+        # Verify the product exists before updating (informational)
+        check_query = f"SELECT COUNT(*) as count FROM `{BIGQUERY_PRODUCTS_TABLE}` WHERE productId = @productId"
+        check_params = [bigquery.ScalarQueryParameter("productId", "STRING", product_id)]
+        check_job_config = bigquery.QueryJobConfig(query_parameters=check_params)
+        check_job = client.query(check_query, job_config=check_job_config)
+        result = list(check_job.result())
+        
+        if result[0].count == 0:
+            print(f"⚠️ Product {product_id} does not exist in BigQuery - MERGE will create new record")
+        else:
+            print(f"✅ Product {product_id} exists in BigQuery - MERGE will update ALL fields")
 
         # Build MERGE statement to update existing row or insert if missing
         merge_query = f"""
