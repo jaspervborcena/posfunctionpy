@@ -6,7 +6,7 @@ initialize_app()
 
 # Import BigQuery modules
 from bigquery_api_endpoints import get_orders_by_store_bq, get_order_details_bq, get_orders_by_date_bq, get_sales_summary_bq, get_products_bq, backfill_products_bq, backfill_orders_bq, backfill_order_details_bq
-from bigquery_triggers import sync_order_to_bigquery, sync_order_details_to_bigquery, sync_products_to_bigquery, sync_products_to_bigquery_streaming, sync_products_to_bigquery_update, sync_products_to_bigquery_delete, sync_order_to_bigquery_update, sync_order_to_bigquery_delete, sync_order_details_to_bigquery_update, sync_order_details_to_bigquery_delete
+from bigquery_triggers import sync_order_to_bigquery, sync_order_details_to_bigquery, sync_products_to_bigquery, sync_products_to_bigquery_update, sync_products_to_bigquery_delete, sync_order_to_bigquery_update, sync_order_to_bigquery_delete, sync_order_details_update, sync_order_details_delete
 from app_logs import app_logs
 from reconciliation import reconcile_daily, reconcile_on_demand
 from paypal_endpoints import paypal_create_order, paypal_capture_order
@@ -33,7 +33,7 @@ def on_request_example(req: https_fn.Request) -> https_fn.Response:
 # - insert_product_inventory_bq: Insert product inventory to BigQuery
 # - get_product_inventory_bq: Get product inventory by store/product from BigQuery
 # - sync_order_to_bigquery: Firestore trigger to sync orders to BigQuery
-# - sync_order_details_to_bigquery: Firestore trigger to sync order details to BigQuery
+# - sync_order_details_to_bigquery: Firestore trigger to sync orderDetails to BigQuery
 #
 # PRODUCTS APIs (FIRESTORE):
 # - insert_product: Insert new product to Firestore products collection

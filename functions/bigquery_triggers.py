@@ -3,6 +3,71 @@ from datetime import datetime
 import json
 from datetime import timezone, timedelta
 
+
+# Helper: normalize various timestamp shapes to ISO-8601 string or None
+def ts_to_iso(val):
+    """Convert a variety of timestamp representations into an ISO-8601 string.
+
+    Handles:
+    - datetime.datetime
+    - numeric milliseconds or seconds (int/float)
+    - dicts from some JSON payloads with 'seconds'/'nanos' or '_seconds'/'_nanoseconds'
+    - objects that expose to_datetime()/ToDatetime() (Firestore Timestamp-like)
+    - strings (returned as-is)
+    Returns None when conversion isn't possible.
+    """
+    if val is None:
+        return None
+    try:
+        # already a string
+        if isinstance(val, str):
+            return val
+        # python datetime
+        if isinstance(val, datetime):
+            return val.isoformat()
+        # Firestore Timestamp-like: try common method names
+        if hasattr(val, 'to_datetime'):
+            try:
+                return val.to_datetime().isoformat()
+            except Exception:
+                pass
+        if hasattr(val, 'ToDatetime'):
+            try:
+                return val.ToDatetime().isoformat()
+            except Exception:
+                pass
+
+        # Dict shapes from some clients or protobuf JSON
+        if isinstance(val, dict):
+            if 'seconds' in val:
+                secs = float(val.get('seconds', 0))
+                nanos = float(val.get('nanos', 0))
+                dt = datetime.fromtimestamp(secs + nanos / 1e9, tz=timezone.utc)
+                return dt.isoformat()
+            if '_seconds' in val:
+                secs = float(val.get('_seconds', 0))
+                nanos = float(val.get('_nanoseconds', 0))
+                dt = datetime.fromtimestamp(secs + nanos / 1e9, tz=timezone.utc)
+                return dt.isoformat()
+
+        # Numeric — guess milliseconds vs seconds
+        if isinstance(val, (int, float)):
+            # heuristics: values > 1e12 are ms since epoch
+            v = float(val)
+            if v > 1e12:
+                dt = datetime.fromtimestamp(v / 1000.0, tz=timezone.utc)
+            else:
+                dt = datetime.fromtimestamp(v, tz=timezone.utc)
+            return dt.isoformat()
+    except Exception:
+        pass
+
+    # last resort: stringify
+    try:
+        return str(val)
+    except Exception:
+        return None
+
 # Import configuration 
 from config import get_bigquery_client, BIGQUERY_ORDERS_TABLE, BIGQUERY_ORDER_DETAILS_TABLE, BIGQUERY_PRODUCTS_TABLE
 from bq_helpers import build_product_payload
@@ -92,15 +157,101 @@ def sync_order_to_bigquery(event: firestore_fn.Event[firestore_fn.DocumentSnapsh
         
         print(f"🧹 Cleaned payload for BigQuery: {payload}")
 
-        # Insert into BigQuery
-        table = client.get_table(BIGQUERY_ORDERS_TABLE)
-        errors = client.insert_rows_json(table, [payload])
-        
-        if errors:
-            print(f"❌ BigQuery insert failed with errors: {errors}")
-        else:
-            print("✅ BigQuery insert successful!")
-            print(f"📋 Inserted order: {order_id}")
+        # Use MERGE to perform an idempotent upsert based on orderId
+        try:
+            merge_query = f"""
+            MERGE `{BIGQUERY_ORDERS_TABLE}` T
+            USING (SELECT @orderId AS orderId) S
+            ON T.orderId = S.orderId
+            WHEN MATCHED THEN
+              UPDATE SET
+                assignedCashierEmail = @assignedCashierEmail,
+                assignedCashierId = @assignedCashierId,
+                assignedCashierName = @assignedCashierName,
+                atpOrOcn = @atpOrOcn,
+                birPermitNo = @birPermitNo,
+                cashSale = @cashSale,
+                companyAddress = @companyAddress,
+                companyEmail = @companyEmail,
+                companyId = @companyId,
+                companyName = @companyName,
+                companyPhone = @companyPhone,
+                companyTaxId = @companyTaxId,
+                createdAt = SAFE_CAST(@createdAt AS TIMESTAMP),
+                createdBy = @createdBy,
+                customerInfo = STRUCT(@customer_address AS address, @customer_customerId AS customerId, @customer_fullName AS fullName, @customer_tin AS tin),
+                date = SAFE_CAST(@date AS TIMESTAMP),
+                discountAmount = @discountAmount,
+                grossAmount = @grossAmount,
+                inclusiveSerialNumber = @inclusiveSerialNumber,
+                invoiceNumber = @invoiceNumber,
+                message = @message,
+                netAmount = @netAmount,
+                payments = STRUCT(@payments_amountTendered AS amountTendered, @payments_changeAmount AS changeAmount, @payments_paymentDescription AS paymentDescription),
+                status = @status,
+                storeId = @storeId,
+                totalAmount = @totalAmount,
+                uid = @uid,
+                updatedAt = SAFE_CAST(@updatedAt AS TIMESTAMP),
+                updatedBy = @updatedBy,
+                vatAmount = @vatAmount,
+                vatExemptAmount = @vatExemptAmount,
+                vatableSales = @vatableSales,
+                zeroRatedSales = @zeroRatedSales
+            WHEN NOT MATCHED THEN
+              INSERT (orderId, assignedCashierEmail, assignedCashierId, assignedCashierName, atpOrOcn, birPermitNo, cashSale, companyAddress, companyEmail, companyId, companyName, companyPhone, companyTaxId, createdAt, createdBy, customerInfo, date, discountAmount, grossAmount, inclusiveSerialNumber, invoiceNumber, message, netAmount, payments, status, storeId, totalAmount, uid, updatedAt, updatedBy, vatAmount, vatExemptAmount, vatableSales, zeroRatedSales)
+                            VALUES(@orderId, @assignedCashierEmail, @assignedCashierId, @assignedCashierName, @atpOrOcn, @birPermitNo, @cashSale, @companyAddress, @companyEmail, @companyId, @companyName, @companyPhone, @companyTaxId, SAFE_CAST(@createdAt AS TIMESTAMP), @createdBy, STRUCT(@customer_address AS address, @customer_customerId AS customerId, @customer_fullName AS fullName, @customer_tin AS tin), SAFE_CAST(@date AS TIMESTAMP), @discountAmount, @grossAmount, @inclusiveSerialNumber, @invoiceNumber, @message, @netAmount, STRUCT(@payments_amountTendered AS amountTendered, @payments_changeAmount AS changeAmount, @payments_paymentDescription AS paymentDescription), @status, @storeId, @totalAmount, @uid, SAFE_CAST(@updatedAt AS TIMESTAMP), @updatedBy, @vatAmount, @vatExemptAmount, @vatableSales, @zeroRatedSales)
+            """
+
+            params = [
+                bigquery.ScalarQueryParameter("orderId", "STRING", order_id),
+                bigquery.ScalarQueryParameter("assignedCashierEmail", "STRING", data.get("assignedCashierEmail")),
+                bigquery.ScalarQueryParameter("assignedCashierId", "STRING", data.get("assignedCashierId")),
+                bigquery.ScalarQueryParameter("assignedCashierName", "STRING", data.get("assignedCashierName")),
+                bigquery.ScalarQueryParameter("atpOrOcn", "STRING", data.get("atpOrOcn")),
+                bigquery.ScalarQueryParameter("birPermitNo", "STRING", data.get("birPermitNo")),
+                bigquery.ScalarQueryParameter("cashSale", "BOOL", bool(data.get("cashSale", False))),
+                bigquery.ScalarQueryParameter("companyAddress", "STRING", data.get("companyAddress")),
+                bigquery.ScalarQueryParameter("companyEmail", "STRING", data.get("companyEmail")),
+                bigquery.ScalarQueryParameter("companyId", "STRING", data.get("companyId")),
+                bigquery.ScalarQueryParameter("companyName", "STRING", data.get("companyName")),
+                bigquery.ScalarQueryParameter("companyPhone", "STRING", data.get("companyPhone")),
+                bigquery.ScalarQueryParameter("companyTaxId", "STRING", data.get("companyTaxId")),
+                bigquery.ScalarQueryParameter("createdAt", "TIMESTAMP", data.get('createdAt').isoformat() if data.get('createdAt') else None),
+                bigquery.ScalarQueryParameter("createdBy", "STRING", data.get("createdBy")),
+                bigquery.ScalarQueryParameter("customer_address", "STRING", data.get("customerInfo", {}).get("address") if data.get("customerInfo") else None),
+                bigquery.ScalarQueryParameter("customer_customerId", "STRING", data.get("customerInfo", {}).get("customerId") if data.get("customerInfo") else None),
+                bigquery.ScalarQueryParameter("customer_fullName", "STRING", data.get("customerInfo", {}).get("fullName") if data.get("customerInfo") else None),
+                bigquery.ScalarQueryParameter("customer_tin", "STRING", data.get("customerInfo", {}).get("tin") if data.get("customerInfo") else None),
+                bigquery.ScalarQueryParameter("date", "TIMESTAMP", data.get('date').isoformat() if data.get('date') else None),
+                bigquery.ScalarQueryParameter("discountAmount", "FLOAT64", float(data.get('discountAmount', 0)) if data.get('discountAmount') is not None else None),
+                bigquery.ScalarQueryParameter("grossAmount", "FLOAT64", float(data.get('grossAmount', 0)) if data.get('grossAmount') is not None else None),
+                bigquery.ScalarQueryParameter("inclusiveSerialNumber", "STRING", data.get('inclusiveSerialNumber')),
+                bigquery.ScalarQueryParameter("invoiceNumber", "STRING", data.get('invoiceNumber', order_id)),
+                bigquery.ScalarQueryParameter("message", "STRING", data.get('message')),
+                bigquery.ScalarQueryParameter("netAmount", "FLOAT64", float(data.get('netAmount', 0)) if data.get('netAmount') is not None else None),
+                # Pass payments fields as scalars to build a STRUCT in SQL (avoid assigning STRING -> STRUCT)
+                bigquery.ScalarQueryParameter("payments_amountTendered", "FLOAT64", float(data.get('payments', {}).get('amountTendered')) if data.get('payments') and data.get('payments').get('amountTendered') is not None else None),
+                bigquery.ScalarQueryParameter("payments_changeAmount", "FLOAT64", float(data.get('payments', {}).get('changeAmount')) if data.get('payments') and data.get('payments').get('changeAmount') is not None else None),
+                bigquery.ScalarQueryParameter("payments_paymentDescription", "STRING", data.get('payments', {}).get('paymentDescription') if data.get('payments') else None),
+                bigquery.ScalarQueryParameter("status", "STRING", data.get('status')),
+                bigquery.ScalarQueryParameter("storeId", "STRING", data.get('storeId')),
+                bigquery.ScalarQueryParameter("totalAmount", "FLOAT64", float(data.get('totalAmount', 0)) if data.get('totalAmount') is not None else None),
+                bigquery.ScalarQueryParameter("uid", "STRING", data.get('uid')),
+                bigquery.ScalarQueryParameter("updatedAt", "TIMESTAMP", data.get('updatedAt').isoformat() if data.get('updatedAt') else None),
+                bigquery.ScalarQueryParameter("updatedBy", "STRING", data.get('updatedBy')),
+                bigquery.ScalarQueryParameter("vatAmount", "FLOAT64", float(data.get('vatAmount', 0)) if data.get('vatAmount') is not None else None),
+                bigquery.ScalarQueryParameter("vatExemptAmount", "FLOAT64", float(data.get('vatExemptAmount', 0)) if data.get('vatExemptAmount') is not None else None),
+                bigquery.ScalarQueryParameter("vatableSales", "FLOAT64", float(data.get('vatableSales', 0)) if data.get('vatableSales') is not None else None),
+                bigquery.ScalarQueryParameter("zeroRatedSales", "FLOAT64", float(data.get('zeroRatedSales', 0)) if data.get('zeroRatedSales') is not None else None)
+            ]
+
+            job_config = bigquery.QueryJobConfig(query_parameters=params)
+            query_job = client.query(merge_query, job_config=job_config)
+            query_job.result()
+            print(f"✅ MERGE upsert completed for order {order_id}")
+        except Exception as me:
+            print(f"❌ MERGE failed for order {order_id}: {me}")
 
     except Exception as e:
         print(f"❌ Unexpected error syncing to BigQuery: {e}")
@@ -123,79 +274,101 @@ def sync_order_to_bigquery_update(event: firestore_fn.Event[firestore_fn.Documen
 
         client = get_bigquery_client()
 
-        # Delete existing order row if present
+        # Use MERGE to upsert the updated order (idempotent)
         try:
-            delete_query = f"DELETE FROM `{BIGQUERY_ORDERS_TABLE}` WHERE orderId = @orderId"
-            params = [bigquery.ScalarQueryParameter("orderId", "STRING", order_id)]
+            merge_query = f"""
+            MERGE `{BIGQUERY_ORDERS_TABLE}` T
+            USING (SELECT @orderId AS orderId) S
+            ON T.orderId = S.orderId
+            WHEN MATCHED THEN
+              UPDATE SET
+                assignedCashierEmail = @assignedCashierEmail,
+                assignedCashierId = @assignedCashierId,
+                assignedCashierName = @assignedCashierName,
+                atpOrOcn = @atpOrOcn,
+                birPermitNo = @birPermitNo,
+                cashSale = @cashSale,
+                companyAddress = @companyAddress,
+                companyEmail = @companyEmail,
+                companyId = @companyId,
+                companyName = @companyName,
+                companyPhone = @companyPhone,
+                companyTaxId = @companyTaxId,
+                createdAt = SAFE_CAST(@createdAt AS TIMESTAMP),
+                createdBy = @createdBy,
+                customerInfo = STRUCT(@customer_address AS address, @customer_customerId AS customerId, @customer_fullName AS fullName, @customer_tin AS tin),
+                date = SAFE_CAST(@date AS TIMESTAMP),
+                discountAmount = @discountAmount,
+                grossAmount = @grossAmount,
+                inclusiveSerialNumber = @inclusiveSerialNumber,
+                invoiceNumber = @invoiceNumber,
+                message = @message,
+                netAmount = @netAmount,
+                payments = STRUCT(@payments_amountTendered AS amountTendered, @payments_changeAmount AS changeAmount, @payments_paymentDescription AS paymentDescription),
+                status = @status,
+                storeId = @storeId,
+                totalAmount = @totalAmount,
+                uid = @uid,
+                updatedAt = SAFE_CAST(@updatedAt AS TIMESTAMP),
+                updatedBy = @updatedBy,
+                vatAmount = @vatAmount,
+                vatExemptAmount = @vatExemptAmount,
+                vatableSales = @vatableSales,
+                zeroRatedSales = @zeroRatedSales
+            WHEN NOT MATCHED THEN
+              INSERT (orderId, assignedCashierEmail, assignedCashierId, assignedCashierName, atpOrOcn, birPermitNo, cashSale, companyAddress, companyEmail, companyId, companyName, companyPhone, companyTaxId, createdAt, createdBy, customerInfo, date, discountAmount, grossAmount, inclusiveSerialNumber, invoiceNumber, message, netAmount, payments, status, storeId, totalAmount, uid, updatedAt, updatedBy, vatAmount, vatExemptAmount, vatableSales, zeroRatedSales)
+                            VALUES(@orderId, @assignedCashierEmail, @assignedCashierId, @assignedCashierName, @atpOrOcn, @birPermitNo, @cashSale, @companyAddress, @companyEmail, @companyId, @companyName, @companyPhone, @companyTaxId, SAFE_CAST(@createdAt AS TIMESTAMP), @createdBy, STRUCT(@customer_address AS address, @customer_customerId AS customerId, @customer_fullName AS fullName, @customer_tin AS tin), SAFE_CAST(@date AS TIMESTAMP), @discountAmount, @grossAmount, @inclusiveSerialNumber, @invoiceNumber, @message, @netAmount, STRUCT(@payments_amountTendered AS amountTendered, @payments_changeAmount AS changeAmount, @payments_paymentDescription AS paymentDescription), @status, @storeId, @totalAmount, @uid, SAFE_CAST(@updatedAt AS TIMESTAMP), @updatedBy, @vatAmount, @vatExemptAmount, @vatableSales, @zeroRatedSales)
+            """
+
+            params = [
+                bigquery.ScalarQueryParameter("orderId", "STRING", order_id),
+                bigquery.ScalarQueryParameter("assignedCashierEmail", "STRING", after.get("assignedCashierEmail")),
+                bigquery.ScalarQueryParameter("assignedCashierId", "STRING", after.get("assignedCashierId")),
+                bigquery.ScalarQueryParameter("assignedCashierName", "STRING", after.get("assignedCashierName")),
+                bigquery.ScalarQueryParameter("atpOrOcn", "STRING", after.get("atpOrOcn")),
+                bigquery.ScalarQueryParameter("birPermitNo", "STRING", after.get("birPermitNo")),
+                bigquery.ScalarQueryParameter("cashSale", "BOOL", bool(after.get("cashSale", False))),
+                bigquery.ScalarQueryParameter("companyAddress", "STRING", after.get("companyAddress")),
+                bigquery.ScalarQueryParameter("companyEmail", "STRING", after.get("companyEmail")),
+                bigquery.ScalarQueryParameter("companyId", "STRING", after.get("companyId")),
+                bigquery.ScalarQueryParameter("companyName", "STRING", after.get("companyName")),
+                bigquery.ScalarQueryParameter("companyPhone", "STRING", after.get("companyPhone")),
+                bigquery.ScalarQueryParameter("companyTaxId", "STRING", after.get("companyTaxId")),
+                bigquery.ScalarQueryParameter("createdAt", "TIMESTAMP", after.get('createdAt').isoformat() if after.get('createdAt') else None),
+                bigquery.ScalarQueryParameter("createdBy", "STRING", after.get("createdBy")),
+                bigquery.ScalarQueryParameter("customer_address", "STRING", after.get("customerInfo", {}).get("address") if after.get("customerInfo") else None),
+                bigquery.ScalarQueryParameter("customer_customerId", "STRING", after.get("customerInfo", {}).get("customerId") if after.get("customerInfo") else None),
+                bigquery.ScalarQueryParameter("customer_fullName", "STRING", after.get("customerInfo", {}).get("fullName") if after.get("customerInfo") else None),
+                bigquery.ScalarQueryParameter("customer_tin", "STRING", after.get("customerInfo", {}).get("tin") if after.get("customerInfo") else None),
+                bigquery.ScalarQueryParameter("date", "TIMESTAMP", after.get('date').isoformat() if after.get('date') else None),
+                bigquery.ScalarQueryParameter("discountAmount", "FLOAT64", float(after.get('discountAmount', 0)) if after.get('discountAmount') is not None else None),
+                bigquery.ScalarQueryParameter("grossAmount", "FLOAT64", float(after.get('grossAmount', 0)) if after.get('grossAmount') is not None else None),
+                bigquery.ScalarQueryParameter("inclusiveSerialNumber", "STRING", after.get("inclusiveSerialNumber")),
+                bigquery.ScalarQueryParameter("invoiceNumber", "STRING", after.get('invoiceNumber', order_id)),
+                bigquery.ScalarQueryParameter("message", "STRING", after.get('message')),
+                bigquery.ScalarQueryParameter("netAmount", "FLOAT64", float(after.get('netAmount', 0)) if after.get('netAmount') is not None else None),
+                # Pass payments fields as scalars to build a STRUCT in SQL (avoid assigning STRING -> STRUCT)
+                bigquery.ScalarQueryParameter("payments_amountTendered", "FLOAT64", float(after.get('payments', {}).get('amountTendered')) if after.get('payments') and after.get('payments').get('amountTendered') is not None else None),
+                bigquery.ScalarQueryParameter("payments_changeAmount", "FLOAT64", float(after.get('payments', {}).get('changeAmount')) if after.get('payments') and after.get('payments').get('changeAmount') is not None else None),
+                bigquery.ScalarQueryParameter("payments_paymentDescription", "STRING", after.get('payments', {}).get('paymentDescription') if after.get('payments') else None),
+                bigquery.ScalarQueryParameter("status", "STRING", after.get('status')),
+                bigquery.ScalarQueryParameter("storeId", "STRING", after.get('storeId')),
+                bigquery.ScalarQueryParameter("totalAmount", "FLOAT64", float(after.get('totalAmount', 0)) if after.get('totalAmount') is not None else None),
+                bigquery.ScalarQueryParameter("uid", "STRING", after.get('uid')),
+                bigquery.ScalarQueryParameter("updatedAt", "TIMESTAMP", after.get('updatedAt').isoformat() if after.get('updatedAt') else None),
+                bigquery.ScalarQueryParameter("updatedBy", "STRING", after.get('updatedBy')),
+                bigquery.ScalarQueryParameter("vatAmount", "FLOAT64", float(after.get('vatAmount', 0)) if after.get('vatAmount') is not None else None),
+                bigquery.ScalarQueryParameter("vatExemptAmount", "FLOAT64", float(after.get('vatExemptAmount', 0)) if after.get('vatExemptAmount') is not None else None),
+                bigquery.ScalarQueryParameter("vatableSales", "FLOAT64", float(after.get('vatableSales', 0)) if after.get('vatableSales') is not None else None),
+                bigquery.ScalarQueryParameter("zeroRatedSales", "FLOAT64", float(after.get('zeroRatedSales', 0)) if after.get('zeroRatedSales') is not None else None)
+            ]
+
             job_config = bigquery.QueryJobConfig(query_parameters=params)
-            delete_job = client.query(delete_query, job_config=job_config)
-            delete_job.result()
-            print(f"🗑️ Removed existing order {order_id} (if any)")
-        except Exception as de:
-            print(f"⚠️ Warning deleting existing order row: {de}")
-
-        # Recreate payload similar to create handler
-        payload = {
-            "assignedCashierEmail": after.get("assignedCashierEmail"),
-            "assignedCashierId": after.get("assignedCashierId"),
-            "assignedCashierName": after.get("assignedCashierName"),
-            "atpOrOcn": after.get("atpOrOcn"),
-            "birPermitNo": after.get("birPermitNo"),
-            "cashSale": after.get("cashSale", False),
-            "companyAddress": after.get("companyAddress"),
-            "companyEmail": after.get("companyEmail"),
-            "companyId": after.get("companyId"),
-            "companyName": after.get("companyName"),
-            "companyPhone": after.get("companyPhone"),
-            "companyTaxId": after.get("companyTaxId"),
-            "createdAt": after.get("createdAt").isoformat() if after.get("createdAt") else None,
-            "createdBy": after.get("createdBy"),
-            "customerInfo": {
-                "address": after.get("customerInfo", {}).get("address") if after.get("customerInfo") else None,
-                "customerId": after.get("customerInfo", {}).get("customerId") if after.get("customerInfo") else None,
-                "fullName": after.get("customerInfo", {}).get("fullName") if after.get("customerInfo") else None,
-                "tin": after.get("customerInfo", {}).get("tin") if after.get("customerInfo") else None
-            } if after.get("customerInfo") else None,
-            "date": after.get("date").isoformat() if after.get("date") else None,
-            "discountAmount": float(after.get("discountAmount", 0)),
-            "grossAmount": float(after.get("grossAmount", 0)),
-            "inclusiveSerialNumber": after.get("inclusiveSerialNumber"),
-            "invoiceNumber": after.get("invoiceNumber", order_id),
-            "message": after.get("message"),
-            "netAmount": float(after.get("netAmount", 0)),
-            "payments": {
-                "amountTendered": float(after.get("payments", {}).get("amountTendered", 0)) if after.get("payments") else 0,
-                "changeAmount": float(after.get("payments", {}).get("changeAmount", 0)) if after.get("payments") else 0,
-                "paymentDescription": after.get("payments", {}).get("paymentDescription") if after.get("payments") else None
-            } if after.get("payments") else None,
-            "status": after.get("status", "active"),
-            "storeId": after.get("storeId"),
-            "totalAmount": float(after.get("totalAmount", 0)),
-            "uid": after.get("uid"),
-            "updatedAt": after.get("updatedAt").isoformat() if after.get("updatedAt") else None,
-            "updatedBy": after.get("updatedBy"),
-            "vatAmount": float(after.get("vatAmount", 0)),
-            "vatExemptAmount": float(after.get("vatExemptAmount", 0)),
-            "vatableSales": float(after.get("vatableSales", 0)),
-            "zeroRatedSales": float(after.get("zeroRatedSales", 0))
-        }
-
-        # Clean payload
-        def clean_payload(obj):
-            if isinstance(obj, dict):
-                return {k: clean_payload(v) for k, v in obj.items() if v is not None}
-            return obj
-
-        payload = clean_payload(payload)
-        payload["orderId"] = order_id
-
-        # Insert updated row
-        table = client.get_table(BIGQUERY_ORDERS_TABLE)
-        errors = client.insert_rows_json(table, [payload])
-        if errors:
-            print(f"❌ Failed to insert updated order: {errors}")
-        else:
-            print(f"✅ Re-inserted updated order {order_id}")
+            query_job = client.query(merge_query, job_config=job_config)
+            query_job.result()
+            print(f"✅ MERGE upsert completed for updated order {order_id}")
+        except Exception as me:
+            print(f"❌ MERGE (update) failed for order {order_id}: {me}")
 
     except Exception as e:
         print(f"❌ Unexpected error syncing updated order to BigQuery: {e}")
@@ -218,107 +391,54 @@ def sync_order_to_bigquery_delete(event: firestore_fn.Event[firestore_fn.Documen
         print(f"❌ Unexpected error deleting order from BigQuery: {e}")
 
 
-# BigQuery trigger for new order details documents  
-@firestore_fn.on_document_created(document="orderDetails/{orderDetailId}", region="asia-east1")
+# BigQuery trigger for new orderDetails documents  
+@firestore_fn.on_document_created(document="orderDetails/{orderDetailsId}", region="asia-east1")
 def sync_order_details_to_bigquery(event: firestore_fn.Event[firestore_fn.DocumentSnapshot]) -> None:
-    print("🔥🔥🔥 FIRESTORE TRIGGER ACTIVATED FOR ORDER DETAILS - BigQuery sync 🔥🔥🔥")
-    
+    """Sync newly created Firestore orderDetails documents into BigQuery orderDetails table."""
+    print("🔥 Firestore trigger activated for new orderDetails - BigQuery sync")
+
+    order_detail_id = event.params["orderDetailsId"]
+    data = event.data.to_dict()
+
+    print(f"📄 Order Detail ID: {order_detail_id}")
+    print(f"� Order Detail data: {data}")
+    print(f"📋 Available fields: {list(data.keys()) if data else 'No fields'}")
+
+    if not data:
+        print("⚠️ Warning: Order detail data is empty!")
+        return
+
     try:
-        order_detail_id = event.params["orderDetailId"]
-        data = event.data.to_dict()
-
-        print(f"📄 Order Detail ID: {order_detail_id}")
-        print(f"📋 Order Detail data: {data}")
-        print(f"📋 Available fields: {list(data.keys()) if data else 'No fields'}")
-
-        if not data:
-            print("⚠️ Warning: Order detail data is empty!")
-            return
-
-        # Get fields from Firestore document
-        company_id = data.get("companyId")
-        order_id = data.get("orderId")
-        store_id = data.get("storeId")
-        items = data.get("items", [])
-        created_at = data.get("createdAt")
-        created_by = data.get("createdBy")
-        uid = data.get("uid")
-        updated_at = data.get("updatedAt")
-        updated_by = data.get("updatedBy")
-        batch_number = data.get("batchNumber")
-        
-        print(f"📋 Found {len(items)} items to process")
-        print(f"🏢 Company ID: {company_id}")
-        print(f"📝 Order ID: {order_id}")
-        print(f"🏪 Store ID: {store_id}")
-
-        if not items:
-            print("⚠️ Warning: No items found in the document!")
-            return
-
         client = get_bigquery_client()
-        
-        # Prepare payload matching your BigQuery schema (with nested items array)
-        payload = {
-            "batchNumber": int(batch_number) if batch_number else None,
-            "companyId": company_id,
-            "createdAt": created_at.isoformat() if created_at else None,
-            "createdBy": created_by,
-            "orderId": order_id,
-            "storeId": store_id,
-            "uid": uid,
-            "updatedAt": updated_at.isoformat() if updated_at else None,
-            "updatedBy": updated_by,
-            "items": []
-        }
-        
-        # Process items array (keep as nested structure)
-        for i, item in enumerate(items):
-            print(f"\n📦 Processing item {i+1}/{len(items)}: {item}")
-            
-            item_payload = {
-                "productId": item.get("productId"),
-                "productName": item.get("productName"),
-                "quantity": int(item.get("quantity", 1)),
-                "price": float(item.get("price", 0)),
-                "discount": float(item.get("discount", 0)),
-                "vat": float(item.get("vat", 0)),
-                "isVatExempt": bool(item.get("isVatExempt", False)),
-                "total": float(item.get("total", 0))
-            }
-            
-            # Remove null values from item
-            item_payload = {k: v for k, v in item_payload.items() if v is not None}
-            payload["items"].append(item_payload)
-        
-        # Remove null values from main payload
-        payload = {k: v for k, v in payload.items() if v is not None}
-        
-        # Add the Firestore document ID as a field
-        payload["orderDetailsId"] = order_detail_id
-        
-        print(f"🧹 Final payload for BigQuery: {payload}")
 
-        # Insert into BigQuery
-        table = client.get_table(BIGQUERY_ORDER_DETAILS_TABLE)
-        errors = client.insert_rows_json(table, [payload])
-        
-        if errors:
-            print(f"❌ BigQuery insert failed with errors: {errors}")
-        else:
-            print(f"✅ BigQuery insert successful! Order details with {len(items)} items")
-            print(f"📋 Order Details ID: {order_detail_id}")
+        # Build payload using centralized helper to standardize column names
+        from bq_helpers import build_orderdetails_payload
+        payload = build_orderdetails_payload(order_detail_id, data)
+
+        print(f"🧹 Final payload for BigQuery (orderDetails): {payload}")
+
+        # Use streaming insert for orderDetails (keeps nested items intact)
+        try:
+            table = client.get_table(BIGQUERY_ORDER_DETAILS_TABLE)
+            print(f"📤 Inserting payload into {BIGQUERY_ORDER_DETAILS_TABLE}")
+            errors = client.insert_rows_json(table, [payload])
+            if errors:
+                print(f"❌ BigQuery insert failed with errors: {errors}")
+            else:
+                print(f"✅ BigQuery insert successful for orderDetails {order_detail_id}")
+        except Exception as ie:
+            print(f"❌ Exception while inserting orderDetails to BigQuery: {ie}")
 
     except Exception as e:
-        print(f"❌ Unexpected error syncing order details to BigQuery: {e}")
+        print(f"❌ Unexpected error syncing orderDetails to BigQuery: {e}")
 
 
 # OrderDetails update handler: delete existing row (if any) then re-insert the full payload
-@firestore_fn.on_document_updated(document="orderDetails/{orderDetailId}", region="asia-east1")
-def sync_order_details_to_bigquery_update(event: firestore_fn.Event[firestore_fn.DocumentSnapshot]) -> None:
+@firestore_fn.on_document_updated(document="orderDetails/{orderDetailsId}", region="asia-east1")
+def sync_order_details_update(event: firestore_fn.Event[firestore_fn.DocumentSnapshot]) -> None:
     print("🔁 Firestore trigger activated for updated orderDetails - BigQuery sync")
     try:
-        order_detail_id = event.params.get("orderDetailId")
+        order_detail_id = event.params.get("orderDetailsId")
         after = event.data.to_dict()
 
         print(f"📄 Order Detail ID (updated): {order_detail_id}")
@@ -341,55 +461,37 @@ def sync_order_details_to_bigquery_update(event: firestore_fn.Event[firestore_fn
         except Exception as de:
             print(f"⚠️ Warning deleting existing orderDetails row: {de}")
 
-        # Recreate payload similar to create handler
-        payload = {
-            "batchNumber": int(after.get("batchNumber")) if after.get("batchNumber") else None,
-            "companyId": after.get("companyId"),
-            "createdAt": after.get("createdAt").isoformat() if after.get("createdAt") else None,
-            "createdBy": after.get("createdBy"),
-            "orderId": after.get("orderId"),
-            "storeId": after.get("storeId"),
-            "uid": after.get("uid"),
-            "updatedAt": after.get("updatedAt").isoformat() if after.get("updatedAt") else None,
-            "updatedBy": after.get("updatedBy"),
-            "items": []
-        }
+        # Recreate payload using centralized helper to standardize column names
+        from bq_helpers import build_orderdetails_payload
+        payload = build_orderdetails_payload(order_detail_id, after)
 
-        for item in after.get("items", []):
-            item_payload = {
-                "productId": item.get("productId"),
-                "productName": item.get("productName"),
-                "quantity": int(item.get("quantity", 1)),
-                "price": float(item.get("price", 0)),
-                "discount": float(item.get("discount", 0)),
-                "vat": float(item.get("vat", 0)),
-                "isVatExempt": bool(item.get("isVatExempt", False)),
-                "total": float(item.get("total", 0))
-            }
-            item_payload = {k: v for k, v in item_payload.items() if v is not None}
-            payload["items"].append(item_payload)
-
-        payload = {k: v for k, v in payload.items() if v is not None}
-        payload["orderDetailsId"] = order_detail_id
-
-        # Insert new payload
-        table = client.get_table(BIGQUERY_ORDER_DETAILS_TABLE)
-        errors = client.insert_rows_json(table, [payload])
-        if errors:
-            print(f"❌ Failed to insert updated orderDetails: {errors}")
-        else:
-            print(f"✅ Re-inserted updated orderDetails {order_detail_id}")
+        # Insert new payload with richer logging (streaming insert)
+        try:
+            table = client.get_table(BIGQUERY_ORDER_DETAILS_TABLE)
+            print(f"📤 Inserting (update) payload into {BIGQUERY_ORDER_DETAILS_TABLE}: {json.dumps(payload)}")
+            errors = client.insert_rows_json(table, [payload])
+            if errors:
+                print(f"❌ Failed to insert updated orderDetails: {errors}")
+                print(f"❗ Failed payload: {json.dumps(payload)}")
+            else:
+                print(f"✅ Re-inserted updated orderDetails {order_detail_id}")
+        except Exception as ie:
+            print(f"❌ Exception while inserting updated orderDetails to BigQuery: {ie}")
+            try:
+                print(f"❗ Payload at exception time: {json.dumps(payload)}")
+            except Exception:
+                pass
 
     except Exception as e:
         print(f"❌ Unexpected error syncing updated orderDetails to BigQuery: {e}")
 
 
 # OrderDetails delete handler
-@firestore_fn.on_document_deleted(document="orderDetails/{orderDetailId}", region="asia-east1")
-def sync_order_details_to_bigquery_delete(event: firestore_fn.Event[firestore_fn.DocumentSnapshot]) -> None:
+@firestore_fn.on_document_deleted(document="orderDetails/{orderDetailsId}", region="asia-east1")
+def sync_order_details_delete(event: firestore_fn.Event[firestore_fn.DocumentSnapshot]) -> None:
     print("🗑️ Firestore trigger activated for deleted orderDetails - BigQuery sync")
     try:
-        order_detail_id = event.params.get("orderDetailId")
+        order_detail_id = event.params.get("orderDetailsId")
         client = get_bigquery_client()
         delete_query = f"DELETE FROM `{BIGQUERY_ORDER_DETAILS_TABLE}` WHERE orderDetailsId = @orderDetailsId"
         params = [bigquery.ScalarQueryParameter("orderDetailsId", "STRING", order_detail_id)]
@@ -502,42 +604,8 @@ def sync_products_to_bigquery(event: firestore_fn.Event[firestore_fn.DocumentSna
         print(f"❌ Unexpected error syncing product to BigQuery: {e}")
 
 
-# Streaming insert variant (direct insert_rows_json) - mirrors orders/orderDetails behavior
-@firestore_fn.on_document_created(document="products/{productId}", region="asia-east1")
-def sync_products_to_bigquery_streaming(event: firestore_fn.Event[firestore_fn.DocumentSnapshot]) -> None:
-    """Stream newly created Firestore product documents into BigQuery using insert_rows_json."""
-    print("🔥 Firestore trigger activated for new product - BigQuery streaming insert")
-
-    try:
-        product_id = event.params.get("productId")
-        data = event.data.to_dict()
-
-        print(f"📄 Product Document ID: {product_id}")
-        print(f"📦 Product data: {data}")
-
-        if not data:
-            print("⚠️ Warning: Product document data is empty!")
-            return
-
-        client = get_bigquery_client()
-
-        # Build payload using centralized helper to standardize column names
-        payload = build_product_payload(product_id, data)
-
-        print(f"🧹 Final payload for streaming insert: {payload}")
-
-        try:
-            table = client.get_table(BIGQUERY_PRODUCTS_TABLE)
-            errors = client.insert_rows_json(table, [payload])
-            if errors:
-                print(f"❌ BigQuery streaming insert failed with errors: {errors}")
-            else:
-                print(f"✅ BigQuery streaming insert successful for product {product_id}")
-        except Exception as e:
-            print(f"❌ Unexpected error during streaming insert: {e}")
-
-    except Exception as e:
-        print(f"❌ Unexpected error in streaming trigger: {e}")
+# Streaming insert variant removed - duplicate decorator was causing conflicts
+# The main sync_products_to_bigquery function handles both MERGE and fallback streaming insert
 
 
 # BigQuery trigger for updated product documents

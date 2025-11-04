@@ -53,37 +53,11 @@ CREATE TABLE `jasperpos-1dfd5.tovrika_pos.orders` (
 
 """
 -- Order Details table (already created)
-CREATE TABLE `jasperpos-1dfd5.tovrika_pos.order_details` (
-  batchNumber INT64,
-  companyId STRING,
-  createdAt TIMESTAMP,
-  createdBy STRING,
-  orderId STRING,
-  storeId STRING,
-  uid STRING,
-  updatedAt TIMESTAMP,
-  updatedBy STRING,
-  items ARRAY<STRUCT<
-    productId STRING,
-    productName STRING,
-    quantity INT64,
-    price FLOAT64,
-    discount FLOAT64,
-    vat FLOAT64,
-    isVatExempt BOOL,
-    total FLOAT64
-  >>,
-  orderDetailsId STRING  -- Added for Firestore document ID
-);
-"""
+-- OLD order_details table has been removed - using orderDetails (camelCase) instead
 
 # If you need to add the new fields to existing tables:
 """
 -- Add orderId field to orders table if not exists
 ALTER TABLE `jasperpos-1dfd5.tovrika_pos.orders` 
 ADD COLUMN IF NOT EXISTS orderId STRING;
-
--- Add orderDetailsId field to order_details table if not exists  
-ALTER TABLE `jasperpos-1dfd5.tovrika_pos.order_details`
-ADD COLUMN IF NOT EXISTS orderDetailsId STRING;
 """
