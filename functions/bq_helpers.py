@@ -45,3 +45,43 @@ def build_product_payload(product_id: str, data: dict) -> dict:
     }
 
     return clean_payload(payload)
+
+
+def build_orderdetails_payload(order_details_id: str, data: dict) -> dict:
+    """Build a BigQuery-ready orderDetails payload.
+
+    This centralizes the mapping from Firestore document to BigQuery column names
+    and normalizes timestamps to ISO strings. The returned dict is suitable for
+    use with insert_rows_json (streaming insert) and mirrors the inline logic
+    used previously in triggers.
+    """
+    payload = {
+        "orderDetailsId": order_details_id,
+        "batchNumber": int(data.get("batchNumber")) if data.get("batchNumber") is not None else None,
+        "companyId": data.get("companyId"),
+        "createdAt": data.get("createdAt").isoformat() if data.get("createdAt") else None,
+        "createdBy": data.get("createdBy"),
+        "orderId": data.get("orderId"),
+        "storeId": data.get("storeId"),
+        "uid": data.get("uid"),
+        "updatedAt": data.get("updatedAt").isoformat() if data.get("updatedAt") else None,
+        "updatedBy": data.get("updatedBy"),
+        "items": []
+    }
+
+    for item in data.get("items", []):
+        item_payload = {
+            "productId": item.get("productId"),
+            "productName": item.get("productName"),
+            "quantity": int(item.get("quantity", 1)),
+            "price": float(item.get("price", 0)),
+            "discount": float(item.get("discount", 0)),
+            "vat": float(item.get("vat", 0)),
+            "isVatExempt": bool(item.get("isVatExempt", False)),
+            "total": float(item.get("total", 0))
+        }
+        # remove None values inside item
+        item_payload = {k: v for k, v in item_payload.items() if v is not None}
+        payload["items"].append(item_payload)
+
+    return clean_payload(payload)

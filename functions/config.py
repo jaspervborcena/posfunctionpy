@@ -10,7 +10,7 @@ FIREBASE_REGION = "asia-east1"
 
 # BigQuery Table Names
 BIGQUERY_ORDERS_TABLE = f"{BIGQUERY_PROJECT_ID}.{BIGQUERY_DATASET_ID}.orders"
-BIGQUERY_ORDER_DETAILS_TABLE = f"{BIGQUERY_PROJECT_ID}.{BIGQUERY_DATASET_ID}.order_details"
+BIGQUERY_ORDER_DETAILS_TABLE = f"{BIGQUERY_PROJECT_ID}.{BIGQUERY_DATASET_ID}.orderDetails"
 # BigQuery products table (matches Firestore `products` collection)
 BIGQUERY_PRODUCTS_TABLE = f"{BIGQUERY_PROJECT_ID}.{BIGQUERY_DATASET_ID}.products"
 
@@ -21,7 +21,7 @@ ORDER_DETAILS_COLLECTION = "orderDetails"
 # Standardized names / aliases to help find resources quickly
 BQ_TABLES = {
     "orders": BIGQUERY_ORDERS_TABLE,
-    "order_details": BIGQUERY_ORDER_DETAILS_TABLE,
+    "orderDetails": BIGQUERY_ORDER_DETAILS_TABLE,
     "products": BIGQUERY_PRODUCTS_TABLE
 }
 

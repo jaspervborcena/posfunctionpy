@@ -586,7 +586,7 @@ def backfill_orders_bq(req: https_fn.Request) -> https_fn.Response:
             ON T.orderId = S.orderId
             WHEN NOT MATCHED THEN
               INSERT (orderId, assignedCashierEmail, assignedCashierId, assignedCashierName, atpOrOcn, birPermitNo, cashSale, companyAddress, companyEmail, companyId, companyName, companyPhone, companyTaxId, createdAt, createdBy, customerInfo, date, discountAmount, grossAmount, inclusiveSerialNumber, invoiceNumber, message, netAmount, payments, status, storeId, totalAmount, uid, updatedAt, updatedBy, vatAmount, vatExemptAmount, vatableSales, zeroRatedSales)
-              VALUES(@orderId, @assignedCashierEmail, @assignedCashierId, @assignedCashierName, @atpOrOcn, @birPermitNo, @cashSale, @companyAddress, @companyEmail, @companyId, @companyName, @companyPhone, @companyTaxId, SAFE_CAST(@createdAt AS TIMESTAMP), @createdBy, @customerInfo, SAFE_CAST(@date AS TIMESTAMP), @discountAmount, @grossAmount, @inclusiveSerialNumber, @invoiceNumber, @message, @netAmount, @payments, @status, @storeId, @totalAmount, @uid, SAFE_CAST(@updatedAt AS TIMESTAMP), @updatedBy, @vatAmount, @vatExemptAmount, @vatableSales, @zeroRatedSales)
+                            VALUES(@orderId, @assignedCashierEmail, @assignedCashierId, @assignedCashierName, @atpOrOcn, @birPermitNo, @cashSale, @companyAddress, @companyEmail, @companyId, @companyName, @companyPhone, @companyTaxId, SAFE_CAST(@createdAt AS TIMESTAMP), @createdBy, STRUCT(@customer_address AS address, @customer_customerId AS customerId, @customer_fullName AS fullName, @customer_tin AS tin), SAFE_CAST(@date AS TIMESTAMP), @discountAmount, @grossAmount, @inclusiveSerialNumber, @invoiceNumber, @message, @netAmount, STRUCT(@payments_amountTendered AS amountTendered, @payments_changeAmount AS changeAmount, @payments_paymentDescription AS paymentDescription), @status, @storeId, @totalAmount, @uid, SAFE_CAST(@updatedAt AS TIMESTAMP), @updatedBy, @vatAmount, @vatExemptAmount, @vatableSales, @zeroRatedSales)
             """
 
             # Prepare parameters (many are nullable)
@@ -606,7 +606,10 @@ def backfill_orders_bq(req: https_fn.Request) -> https_fn.Response:
                 bigquery.ScalarQueryParameter("companyTaxId", "STRING", d.get('companyTaxId')),
                 bigquery.ScalarQueryParameter("createdAt", "TIMESTAMP", d.get('createdAt').isoformat() if d.get('createdAt') else None),
                 bigquery.ScalarQueryParameter("createdBy", "STRING", d.get('createdBy')),
-                bigquery.ScalarQueryParameter("customerInfo", "STRING", json.dumps(d.get('customerInfo')) if d.get('customerInfo') else None),
+                bigquery.ScalarQueryParameter("customer_address", "STRING", d.get('customerInfo', {}).get('address') if d.get('customerInfo') else None),
+                bigquery.ScalarQueryParameter("customer_customerId", "STRING", d.get('customerInfo', {}).get('customerId') if d.get('customerInfo') else None),
+                bigquery.ScalarQueryParameter("customer_fullName", "STRING", d.get('customerInfo', {}).get('fullName') if d.get('customerInfo') else None),
+                bigquery.ScalarQueryParameter("customer_tin", "STRING", d.get('customerInfo', {}).get('tin') if d.get('customerInfo') else None),
                 bigquery.ScalarQueryParameter("date", "TIMESTAMP", d.get('date').isoformat() if d.get('date') else None),
                 bigquery.ScalarQueryParameter("discountAmount", "FLOAT64", float(d.get('discountAmount', 0)) if d.get('discountAmount') is not None else None),
                 bigquery.ScalarQueryParameter("grossAmount", "FLOAT64", float(d.get('grossAmount', 0)) if d.get('grossAmount') is not None else None),
@@ -614,7 +617,10 @@ def backfill_orders_bq(req: https_fn.Request) -> https_fn.Response:
                 bigquery.ScalarQueryParameter("invoiceNumber", "STRING", d.get('invoiceNumber') or oid),
                 bigquery.ScalarQueryParameter("message", "STRING", d.get('message')),
                 bigquery.ScalarQueryParameter("netAmount", "FLOAT64", float(d.get('netAmount', 0)) if d.get('netAmount') is not None else None),
-                bigquery.ScalarQueryParameter("payments", "STRING", json.dumps(d.get('payments')) if d.get('payments') else None),
+                # Pass payments subfields as scalars so SQL can construct a STRUCT for the payments column
+                bigquery.ScalarQueryParameter("payments_amountTendered", "FLOAT64", float(d.get('payments', {}).get('amountTendered')) if d.get('payments') and d.get('payments').get('amountTendered') is not None else None),
+                bigquery.ScalarQueryParameter("payments_changeAmount", "FLOAT64", float(d.get('payments', {}).get('changeAmount')) if d.get('payments') and d.get('payments').get('changeAmount') is not None else None),
+                bigquery.ScalarQueryParameter("payments_paymentDescription", "STRING", d.get('payments', {}).get('paymentDescription') if d.get('payments') else None),
                 bigquery.ScalarQueryParameter("status", "STRING", d.get('status')),
                 bigquery.ScalarQueryParameter("storeId", "STRING", d.get('storeId')),
                 bigquery.ScalarQueryParameter("totalAmount", "FLOAT64", float(d.get('totalAmount', 0)) if d.get('totalAmount') is not None else None),
