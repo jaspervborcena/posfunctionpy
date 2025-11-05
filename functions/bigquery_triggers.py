@@ -610,62 +610,67 @@ def sync_products_to_bigquery(event: firestore_fn.Event[firestore_fn.DocumentSna
         payload = build_product_payload(product_id, data)
 
         print("🔀 Using MERGE to insert if not exists (idempotent)")
-        try:
-            # Build MERGE statement that inserts when productId does not exist
-            merge_query = f"""
-            MERGE `{BIGQUERY_PRODUCTS_TABLE}` T
-            USING (SELECT @productId AS productId) S
-            ON T.productId = S.productId
-            WHEN NOT MATCHED THEN
-              INSERT (productId, barcodeId, category, companyId, createdAt, createdBy, description, discountType, discountValue, hasDiscount, imageUrl, isFavorite, isVatApplicable, productCode, productName, sellingPrice, skuId, status, storeId, totalStock, uid, unitType, updatedAt, updatedBy)
-              VALUES(@productId, @barcodeId, @category, @companyId, SAFE_CAST(@createdAt AS TIMESTAMP), @createdBy, @description, @discountType, @discountValue, @hasDiscount, @imageUrl, @isFavorite, @isVatApplicable, @productCode, @productName, @sellingPrice, @skuId, @status, @storeId, @totalStock, @uid, @unitType, SAFE_CAST(@updatedAt AS TIMESTAMP), @updatedBy)
-            """
+        # Try MERGE with retries to avoid falling back to streaming insert (streaming insert can create duplicates on retries)
+        merge_query = f"""
+        MERGE `{BIGQUERY_PRODUCTS_TABLE}` T
+        USING (SELECT @productId AS productId) S
+        ON T.productId = S.productId
+        WHEN NOT MATCHED THEN
+          INSERT (productId, barcodeId, category, companyId, createdAt, createdBy, description, discountType, discountValue, hasDiscount, imageUrl, isFavorite, isVatApplicable, productCode, productName, sellingPrice, skuId, status, storeId, totalStock, uid, unitType, updatedAt, updatedBy)
+          VALUES(@productId, @barcodeId, @category, @companyId, SAFE_CAST(@createdAt AS TIMESTAMP), @createdBy, @description, @discountType, @discountValue, @hasDiscount, @imageUrl, @isFavorite, @isVatApplicable, @productCode, @productName, @sellingPrice, @skuId, @status, @storeId, @totalStock, @uid, @unitType, SAFE_CAST(@updatedAt AS TIMESTAMP), @updatedBy)
+        """
 
-            # Prepare query parameters (use appropriate types and None where missing)
-            params = [
-                bigquery.ScalarQueryParameter("productId", "STRING", product_id),
-                bigquery.ScalarQueryParameter("barcodeId", "STRING", data.get("barcodeId")),
-                bigquery.ScalarQueryParameter("category", "STRING", data.get("category")),
-                bigquery.ScalarQueryParameter("companyId", "STRING", data.get("companyId")),
-                bigquery.ScalarQueryParameter("createdAt", "TIMESTAMP", data.get("createdAt").isoformat() if data.get("createdAt") else None),
-                bigquery.ScalarQueryParameter("createdBy", "STRING", data.get("createdBy")),
-                bigquery.ScalarQueryParameter("description", "STRING", data.get("description")),
-                bigquery.ScalarQueryParameter("discountType", "STRING", data.get("discountType")),
-                bigquery.ScalarQueryParameter("discountValue", "FLOAT64", float(data.get("discountValue")) if data.get("discountValue") is not None else None),
-                bigquery.ScalarQueryParameter("hasDiscount", "BOOL", bool(data.get("hasDiscount", False))),
-                bigquery.ScalarQueryParameter("imageUrl", "STRING", data.get("imageUrl")),
-                bigquery.ScalarQueryParameter("isFavorite", "BOOL", bool(data.get("isFavorite", False))),
-                bigquery.ScalarQueryParameter("isVatApplicable", "BOOL", bool(data.get("isVatApplicable", False))),
-                bigquery.ScalarQueryParameter("productCode", "STRING", data.get("productCode")),
-                bigquery.ScalarQueryParameter("productName", "STRING", data.get("productName")),
-                bigquery.ScalarQueryParameter("sellingPrice", "FLOAT64", float(data.get("sellingPrice")) if data.get("sellingPrice") is not None else None),
-                bigquery.ScalarQueryParameter("skuId", "STRING", data.get("skuId")),
-                bigquery.ScalarQueryParameter("status", "STRING", data.get("status")),
-                bigquery.ScalarQueryParameter("storeId", "STRING", data.get("storeId")),
-                bigquery.ScalarQueryParameter("totalStock", "INT64", int(data.get("totalStock")) if data.get("totalStock") is not None else None),
-                bigquery.ScalarQueryParameter("uid", "STRING", data.get("uid")),
-                bigquery.ScalarQueryParameter("unitType", "STRING", data.get("unitType")),
-                bigquery.ScalarQueryParameter("updatedAt", "TIMESTAMP", data.get("updatedAt").isoformat() if data.get("updatedAt") else None),
-                bigquery.ScalarQueryParameter("updatedBy", "STRING", data.get("updatedBy"))
-            ]
+        params = [
+            bigquery.ScalarQueryParameter("productId", "STRING", product_id),
+            bigquery.ScalarQueryParameter("barcodeId", "STRING", data.get("barcodeId")),
+            bigquery.ScalarQueryParameter("category", "STRING", data.get("category")),
+            bigquery.ScalarQueryParameter("companyId", "STRING", data.get("companyId")),
+            bigquery.ScalarQueryParameter("createdAt", "TIMESTAMP", data.get("createdAt").isoformat() if data.get("createdAt") else None),
+            bigquery.ScalarQueryParameter("createdBy", "STRING", data.get("createdBy")),
+            bigquery.ScalarQueryParameter("description", "STRING", data.get("description")),
+            bigquery.ScalarQueryParameter("discountType", "STRING", data.get("discountType")),
+            bigquery.ScalarQueryParameter("discountValue", "FLOAT64", float(data.get("discountValue")) if data.get("discountValue") is not None else None),
+            bigquery.ScalarQueryParameter("hasDiscount", "BOOL", bool(data.get("hasDiscount", False))),
+            bigquery.ScalarQueryParameter("imageUrl", "STRING", data.get("imageUrl")),
+            bigquery.ScalarQueryParameter("isFavorite", "BOOL", bool(data.get("isFavorite", False))),
+            bigquery.ScalarQueryParameter("isVatApplicable", "BOOL", bool(data.get("isVatApplicable", False))),
+            bigquery.ScalarQueryParameter("productCode", "STRING", data.get("productCode")),
+            bigquery.ScalarQueryParameter("productName", "STRING", data.get("productName")),
+            bigquery.ScalarQueryParameter("sellingPrice", "FLOAT64", float(data.get("sellingPrice")) if data.get("sellingPrice") is not None else None),
+            bigquery.ScalarQueryParameter("skuId", "STRING", data.get("skuId")),
+            bigquery.ScalarQueryParameter("status", "STRING", data.get("status")),
+            bigquery.ScalarQueryParameter("storeId", "STRING", data.get("storeId")),
+            bigquery.ScalarQueryParameter("totalStock", "INT64", int(data.get("totalStock")) if data.get("totalStock") is not None else None),
+            bigquery.ScalarQueryParameter("uid", "STRING", data.get("uid")),
+            bigquery.ScalarQueryParameter("unitType", "STRING", data.get("unitType")),
+            bigquery.ScalarQueryParameter("updatedAt", "TIMESTAMP", data.get("updatedAt").isoformat() if data.get("updatedAt") else None),
+            bigquery.ScalarQueryParameter("updatedBy", "STRING", data.get("updatedBy"))
+        ]
 
-            job_config = bigquery.QueryJobConfig(query_parameters=params)
-            query_job = client.query(merge_query, job_config=job_config)
-            query_job.result()  # Wait for completion
-            print(f"✅ MERGE completed for product {product_id}")
-
-        except Exception as e:
-            # If MERGE fails, fallback to insert_rows_json (best-effort)
-            print(f"⚠️ MERGE failed: {e} — falling back to streaming insert")
+        # Retry MERGE a few times on transient failures instead of falling back to streaming insert
+        import time
+        max_attempts = 3
+        attempt = 0
+        last_exc = None
+        while attempt < max_attempts:
             try:
-                table = client.get_table(BIGQUERY_PRODUCTS_TABLE)
-                errors = client.insert_rows_json(table, [payload])
-                if errors:
-                    print(f"❌ BigQuery insert fallback failed: {errors}")
-                else:
-                    print(f"✅ Fallback insert successful for product {product_id}")
-            except Exception as ie:
-                print(f"❌ Fallback insert also failed: {ie}")
+                job_config = bigquery.QueryJobConfig(query_parameters=params)
+                query_job = client.query(merge_query, job_config=job_config)
+                query_job.result()
+                print(f"✅ MERGE completed for product {product_id} (attempt {attempt+1})")
+                last_exc = None
+                break
+            except Exception as e:
+                last_exc = e
+                attempt += 1
+                wait = 1 * attempt
+                print(f"⚠️ MERGE attempt {attempt} failed for product {product_id}: {e} - retrying in {wait}s")
+                time.sleep(wait)
+
+        if last_exc:
+            # Do not perform a blind streaming insert because it can create duplicates during retries.
+            print(f"❌ MERGE ultimately failed for product {product_id} after {max_attempts} attempts: {last_exc}")
+            # Optionally you could surface the payload to an error queue or a dead-letter table for manual inspection
 
     except Exception as e:
         print(f"❌ Unexpected error syncing product to BigQuery: {e}")
