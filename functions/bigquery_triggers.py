@@ -813,3 +813,178 @@ def sync_products_to_bigquery_delete(event: firestore_fn.Event[firestore_fn.Docu
 
     except Exception as e:
         print(f"❌ Unexpected error deleting product from BigQuery: {e}")
+
+
+# OrderSellingTracking: create handler
+@firestore_fn.on_document_created(document="orderSellingTracking/{orderSellingTrackingId}", region="asia-east1")
+def sync_order_selling_tracking_to_bigquery(event: firestore_fn.Event[firestore_fn.DocumentSnapshot]) -> None:
+    print("🔥 Firestore trigger activated for new orderSellingTracking - BigQuery sync")
+    try:
+        ost_id = event.params.get("orderSellingTrackingId")
+        data = event.data.to_dict()
+
+        print(f"📄 orderSellingTracking Document ID: {ost_id}")
+        print(f"📦 Document data: {data}")
+
+        if not data:
+            print("⚠️ Warning: orderSellingTracking document data is empty!")
+            return
+
+        client = get_bigquery_client()
+
+        # Build payload with explicit fields and map document id
+        payload = {
+            "orderSellingTrackingId": ost_id,
+            "cashierEmail": data.get("cashierEmail"),
+            "cashierId": data.get("cashierId"),
+            "cashierName": data.get("cashierName"),
+            "companyId": data.get("companyId"),
+            "createdAt": data.get("createdAt").isoformat() if data.get("createdAt") else None,
+            "createdBy": data.get("createdBy"),
+            "invoiceNumber": data.get("invoiceNumber"),
+            "lineTotal": float(data.get("lineTotal")) if data.get("lineTotal") is not None else None,
+            "orderId": data.get("orderId"),
+            "productId": data.get("productId"),
+            "productName": data.get("productName"),
+            "quantity": float(data.get("quantity")) if data.get("quantity") is not None else None,
+            "status": data.get("status"),
+            "storeId": data.get("storeId"),
+            "uid": data.get("uid"),
+            "unitPrice": float(data.get("unitPrice")) if data.get("unitPrice") is not None else None,
+            "updatedAt": data.get("updatedAt").isoformat() if data.get("updatedAt") else None,
+            "updatedBy": data.get("updatedBy")
+        }
+
+        # Use MERGE upsert to avoid duplicates
+        merge_query = f"""
+        MERGE `{BIGQUERY_ORDER_SELLING_TRACKING_TABLE}` T
+        USING (SELECT @orderSellingTrackingId AS orderSellingTrackingId) S
+        ON T.orderSellingTrackingId = S.orderSellingTrackingId
+        WHEN NOT MATCHED THEN
+          INSERT (orderSellingTrackingId, cashierEmail, cashierId, cashierName, companyId, createdAt, createdBy, invoiceNumber, lineTotal, orderId, productId, productName, quantity, status, storeId, uid, unitPrice, updatedAt, updatedBy)
+          VALUES(@orderSellingTrackingId, @cashierEmail, @cashierId, @cashierName, @companyId, SAFE_CAST(@createdAt AS TIMESTAMP), @createdBy, @invoiceNumber, @lineTotal, @orderId, @productId, @productName, @quantity, @status, @storeId, @uid, @unitPrice, SAFE_CAST(@updatedAt AS TIMESTAMP), @updatedBy)
+        """
+
+        params = [
+            bigquery.ScalarQueryParameter("orderSellingTrackingId", "STRING", ost_id),
+            bigquery.ScalarQueryParameter("cashierEmail", "STRING", payload.get("cashierEmail")),
+            bigquery.ScalarQueryParameter("cashierId", "STRING", payload.get("cashierId")),
+            bigquery.ScalarQueryParameter("cashierName", "STRING", payload.get("cashierName")),
+            bigquery.ScalarQueryParameter("companyId", "STRING", payload.get("companyId")),
+            bigquery.ScalarQueryParameter("createdAt", "TIMESTAMP", payload.get("createdAt")),
+            bigquery.ScalarQueryParameter("createdBy", "STRING", payload.get("createdBy")),
+            bigquery.ScalarQueryParameter("invoiceNumber", "STRING", payload.get("invoiceNumber")),
+            bigquery.ScalarQueryParameter("lineTotal", "FLOAT64", payload.get("lineTotal")),
+            bigquery.ScalarQueryParameter("orderId", "STRING", payload.get("orderId")),
+            bigquery.ScalarQueryParameter("productId", "STRING", payload.get("productId")),
+            bigquery.ScalarQueryParameter("productName", "STRING", payload.get("productName")),
+            bigquery.ScalarQueryParameter("quantity", "FLOAT64", payload.get("quantity")),
+            bigquery.ScalarQueryParameter("status", "STRING", payload.get("status")),
+            bigquery.ScalarQueryParameter("storeId", "STRING", payload.get("storeId")),
+            bigquery.ScalarQueryParameter("uid", "STRING", payload.get("uid")),
+            bigquery.ScalarQueryParameter("unitPrice", "FLOAT64", payload.get("unitPrice")),
+            bigquery.ScalarQueryParameter("updatedAt", "TIMESTAMP", payload.get("updatedAt")),
+            bigquery.ScalarQueryParameter("updatedBy", "STRING", payload.get("updatedBy"))
+        ]
+
+        job_config = bigquery.QueryJobConfig(query_parameters=params)
+        query_job = client.query(merge_query, job_config=job_config)
+        query_job.result()
+        print(f"✅ MERGE completed for orderSellingTracking {ost_id}")
+
+    except Exception as e:
+        print(f"❌ Unexpected error syncing orderSellingTracking to BigQuery: {e}")
+
+
+# OrderSellingTracking update handler
+@firestore_fn.on_document_updated(document="orderSellingTracking/{orderSellingTrackingId}", region="asia-east1")
+def sync_order_selling_tracking_update(event: firestore_fn.Event[firestore_fn.DocumentSnapshot]) -> None:
+    print("🔁 Firestore trigger activated for updated orderSellingTracking - BigQuery sync")
+    try:
+        ost_id = event.params.get("orderSellingTrackingId")
+        after = event.data.after.to_dict()
+
+        print(f"📄 orderSellingTracking ID (updated): {ost_id}")
+        print(f"📦 New data: {after}")
+
+        if not after:
+            print("⚠️ Warning: updated document empty — skipping")
+            return
+
+        client = get_bigquery_client()
+
+        merge_query = f"""
+        MERGE `{BIGQUERY_ORDER_SELLING_TRACKING_TABLE}` T
+        USING (SELECT @orderSellingTrackingId AS orderSellingTrackingId) S
+        ON T.orderSellingTrackingId = S.orderSellingTrackingId
+        WHEN MATCHED THEN
+          UPDATE SET
+            cashierEmail = @cashierEmail,
+            cashierId = @cashierId,
+            cashierName = @cashierName,
+            companyId = @companyId,
+            createdAt = SAFE_CAST(@createdAt AS TIMESTAMP),
+            createdBy = @createdBy,
+            invoiceNumber = @invoiceNumber,
+            lineTotal = @lineTotal,
+            orderId = @orderId,
+            productId = @productId,
+            productName = @productName,
+            quantity = @quantity,
+            status = @status,
+            storeId = @storeId,
+            uid = @uid,
+            unitPrice = @unitPrice,
+            updatedAt = SAFE_CAST(@updatedAt AS TIMESTAMP),
+            updatedBy = @updatedBy
+        WHEN NOT MATCHED THEN
+          INSERT (orderSellingTrackingId, cashierEmail, cashierId, cashierName, companyId, createdAt, createdBy, invoiceNumber, lineTotal, orderId, productId, productName, quantity, status, storeId, uid, unitPrice, updatedAt, updatedBy)
+          VALUES(@orderSellingTrackingId, @cashierEmail, @cashierId, @cashierName, @companyId, SAFE_CAST(@createdAt AS TIMESTAMP), @createdBy, @invoiceNumber, @lineTotal, @orderId, @productId, @productName, @quantity, @status, @storeId, @uid, @unitPrice, SAFE_CAST(@updatedAt AS TIMESTAMP), @updatedBy)
+        """
+
+        params = [
+            bigquery.ScalarQueryParameter("orderSellingTrackingId", "STRING", ost_id),
+            bigquery.ScalarQueryParameter("cashierEmail", "STRING", after.get("cashierEmail")),
+            bigquery.ScalarQueryParameter("cashierId", "STRING", after.get("cashierId")),
+            bigquery.ScalarQueryParameter("cashierName", "STRING", after.get("cashierName")),
+            bigquery.ScalarQueryParameter("companyId", "STRING", after.get("companyId")),
+            bigquery.ScalarQueryParameter("createdAt", "TIMESTAMP", after.get("createdAt").isoformat() if after.get("createdAt") else None),
+            bigquery.ScalarQueryParameter("createdBy", "STRING", after.get("createdBy")),
+            bigquery.ScalarQueryParameter("invoiceNumber", "STRING", after.get("invoiceNumber")),
+            bigquery.ScalarQueryParameter("lineTotal", "FLOAT64", float(after.get("lineTotal")) if after.get("lineTotal") is not None else None),
+            bigquery.ScalarQueryParameter("orderId", "STRING", after.get("orderId")),
+            bigquery.ScalarQueryParameter("productId", "STRING", after.get("productId")),
+            bigquery.ScalarQueryParameter("productName", "STRING", after.get("productName")),
+            bigquery.ScalarQueryParameter("quantity", "FLOAT64", float(after.get("quantity")) if after.get("quantity") is not None else None),
+            bigquery.ScalarQueryParameter("status", "STRING", after.get("status")),
+            bigquery.ScalarQueryParameter("storeId", "STRING", after.get("storeId")),
+            bigquery.ScalarQueryParameter("uid", "STRING", after.get("uid")),
+            bigquery.ScalarQueryParameter("unitPrice", "FLOAT64", float(after.get("unitPrice")) if after.get("unitPrice") is not None else None),
+            bigquery.ScalarQueryParameter("updatedAt", "TIMESTAMP", after.get("updatedAt").isoformat() if after.get("updatedAt") else None),
+            bigquery.ScalarQueryParameter("updatedBy", "STRING", after.get("updatedBy"))
+        ]
+
+        job_config = bigquery.QueryJobConfig(query_parameters=params)
+        query_job = client.query(merge_query, job_config=job_config)
+        query_job.result()
+        print(f"✅ MERGE (update) completed for orderSellingTracking {ost_id}")
+
+    except Exception as e:
+        print(f"❌ Unexpected error syncing updated orderSellingTracking to BigQuery: {e}")
+
+
+# OrderSellingTracking delete handler
+@firestore_fn.on_document_deleted(document="orderSellingTracking/{orderSellingTrackingId}", region="asia-east1")
+def sync_order_selling_tracking_delete(event: firestore_fn.Event[firestore_fn.DocumentSnapshot]) -> None:
+    print("🗑️ Firestore trigger activated for deleted orderSellingTracking - BigQuery sync")
+    try:
+        ost_id = event.params.get("orderSellingTrackingId")
+        client = get_bigquery_client()
+        delete_query = f"DELETE FROM `{BIGQUERY_ORDER_SELLING_TRACKING_TABLE}` WHERE orderSellingTrackingId = @orderSellingTrackingId"
+        params = [bigquery.ScalarQueryParameter("orderSellingTrackingId", "STRING", ost_id)]
+        job_config = bigquery.QueryJobConfig(query_parameters=params)
+        job = client.query(delete_query, job_config=job_config)
+        job.result()
+        print(f"✅ Deleted orderSellingTracking {ost_id} from BigQuery (if existed)")
+    except Exception as e:
+        print(f"❌ Unexpected error deleting orderSellingTracking from BigQuery: {e}")
