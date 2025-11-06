@@ -884,19 +884,53 @@ def get_orders_by_date_bq(req: https_fn.Request) -> https_fn.Response:
         print(f"🔍 BigQuery date range query: {query}")
         print(f"📋 Parameters: from_date={from_dt.date()}, to_date={to_dt.date()}, store_id={store_id}")
         
-        # Execute query
+        # Execute query with timeout and error handling
+        print(f"⏳ Starting BigQuery job...")
         query_job = client.query(query, job_config=job_config)
-        results = query_job.result()
         
-        # Convert results to list
+        # Wait for job completion with timeout
+        try:
+            results = query_job.result(timeout=30)  # 30 second timeout
+            print(f"✅ BigQuery job completed, processing results...")
+        except Exception as job_error:
+            print(f"❌ BigQuery job failed or timed out: {job_error}")
+            # Check if it's a timeout vs actual failure
+            if "timeout" in str(job_error).lower():
+                print(f"⚠️ Query timed out but may still be running. Job ID: {query_job.job_id}")
+            raise job_error
+        
+        # Convert results to list with better error handling
         orders = []
-        for row in results:
-            order = dict(row)
-            # Convert datetime objects to ISO strings for JSON serialization
-            for key, value in order.items():
-                if isinstance(value, datetime):
-                    order[key] = value.isoformat()
-            orders.append(order)
+        row_count = 0
+        try:
+            for row in results:
+                row_count += 1
+                order = {}
+                # Safer conversion of row data
+                for key, value in row.items():
+                    try:
+                        if value is None:
+                            order[key] = None
+                        elif isinstance(value, datetime):
+                            order[key] = value.isoformat()
+                        elif hasattr(value, 'isoformat'):  # Other datetime-like objects
+                            order[key] = value.isoformat()
+                        else:
+                            order[key] = value
+                    except Exception as conv_error:
+                        print(f"⚠️ Error converting field {key}: {conv_error}")
+                        order[key] = str(value) if value is not None else None
+                orders.append(order)
+                
+                # Safety check for large result sets
+                if row_count > 10000:  # Limit to prevent memory issues
+                    print(f"⚠️ Result set truncated at {row_count} rows to prevent memory issues")
+                    break
+            
+            print(f"📊 Successfully processed {len(orders)} orders")
+        except Exception as processing_error:
+            print(f"❌ Error processing results: {processing_error}")
+            raise processing_error
         
         response_data = {
             "success": True,
