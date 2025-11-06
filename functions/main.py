@@ -5,7 +5,7 @@ from firebase_admin import initialize_app
 initialize_app()
 
 # Import BigQuery modules
-from bigquery_api_endpoints import get_orders_by_store_bq, get_order_details_bq, get_orders_by_date_bq, get_sales_summary_bq, get_products_bq, backfill_products_bq, backfill_orders_bq, backfill_order_details_bq
+from bigquery_api_endpoints import get_orders_count_by_date_bq, get_orders_count_by_status_bq, get_sales_summary_bq, get_products_bq, get_orders_bq
 from bigquery_triggers import sync_order_to_bigquery, sync_order_details_to_bigquery, sync_products_to_bigquery, sync_products_to_bigquery_update, sync_products_to_bigquery_delete, sync_order_to_bigquery_update, sync_order_to_bigquery_delete, sync_order_details_update, sync_order_details_delete
 from app_logs import app_logs
 from reconciliation import reconcile_daily, reconcile_on_demand
@@ -26,9 +26,10 @@ def on_request_example(req: https_fn.Request) -> https_fn.Response:
 # All available functions:
 # 
 # BIGQUERY APIs:
-# - get_orders_by_store_bq: Get orders by store from BigQuery  
-# - get_order_details_bq: Get order details by store and order from BigQuery
-# - get_orders_by_date_bq: Get orders by date range from BigQuery
+# - get_products_bq: Get products by store from BigQuery  
+# - get_orders_bq: Get orders by store from BigQuery (paginated)
+# - get_orders_count_by_date_bq: Get order count statistics aggregated by date from BigQuery
+# - get_orders_count_by_status_bq: Get order count statistics aggregated by date with amounts from BigQuery
 # - get_sales_summary_bq: Get sales summary with aggregated data (defaults to today)
 # - insert_product_inventory_bq: Insert product inventory to BigQuery
 # - get_product_inventory_bq: Get product inventory by store/product from BigQuery
