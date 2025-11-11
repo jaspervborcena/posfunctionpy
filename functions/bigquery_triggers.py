@@ -2,6 +2,7 @@ from firebase_functions import firestore_fn
 from datetime import datetime
 import json
 from datetime import timezone, timedelta
+from decimal import Decimal, InvalidOperation
 
 
 # Helper: normalize various timestamp shapes to ISO-8601 string or None
@@ -39,6 +40,10 @@ def ts_to_iso(val):
 
         # Dict shapes from some clients or protobuf JSON
         if isinstance(val, dict):
+            # Handle Firestore serverTimestamp placeholder
+            if '_methodName' in val and val.get('_methodName') == 'serverTimestamp':
+                # Return current timestamp as server timestamps are placeholders
+                return datetime.now(timezone.utc).isoformat()
             if 'seconds' in val:
                 secs = float(val.get('seconds', 0))
                 nanos = float(val.get('nanos', 0))
@@ -69,7 +74,7 @@ def ts_to_iso(val):
         return None
 
 # Import configuration 
-from config import get_bigquery_client, BIGQUERY_ORDERS_TABLE, BIGQUERY_ORDER_DETAILS_TABLE, BIGQUERY_PRODUCTS_TABLE
+from config import get_bigquery_client, BIGQUERY_ORDERS_TABLE, BIGQUERY_ORDER_DETAILS_TABLE, BIGQUERY_PRODUCTS_TABLE, BIGQUERY_ORDER_SELLING_TRACKING_TABLE
 from bq_helpers import build_product_payload
 
 try:
@@ -155,10 +160,14 @@ def sync_order_to_bigquery(event: firestore_fn.Event[firestore_fn.DocumentSnapsh
             "zeroRatedSales": float(data.get("zeroRatedSales", 0))
         }
         
-        # Remove null values to avoid BigQuery issues
+        # Remove null values and convert Decimal to JSON-friendly types
         def clean_payload(obj):
             if isinstance(obj, dict):
                 return {k: clean_payload(v) for k, v in obj.items() if v is not None}
+            if isinstance(obj, list):
+                return [clean_payload(v) for v in obj]
+            if isinstance(obj, Decimal):
+                return str(obj)
             return obj
         
         payload = clean_payload(payload)
@@ -228,13 +237,13 @@ def sync_order_to_bigquery(event: firestore_fn.Event[firestore_fn.DocumentSnapsh
                 bigquery.ScalarQueryParameter("companyName", "STRING", data.get("companyName")),
                 bigquery.ScalarQueryParameter("companyPhone", "STRING", data.get("companyPhone")),
                 bigquery.ScalarQueryParameter("companyTaxId", "STRING", data.get("companyTaxId")),
-                bigquery.ScalarQueryParameter("createdAt", "TIMESTAMP", data.get('createdAt').isoformat() if data.get('createdAt') else None),
+                bigquery.ScalarQueryParameter("createdAt", "TIMESTAMP", ts_to_iso(data.get('createdAt'))),
                 bigquery.ScalarQueryParameter("createdBy", "STRING", data.get("createdBy")),
                 bigquery.ScalarQueryParameter("customer_address", "STRING", data.get("customerInfo", {}).get("address") if data.get("customerInfo") else None),
                 bigquery.ScalarQueryParameter("customer_customerId", "STRING", data.get("customerInfo", {}).get("customerId") if data.get("customerInfo") else None),
                 bigquery.ScalarQueryParameter("customer_fullName", "STRING", data.get("customerInfo", {}).get("fullName") if data.get("customerInfo") else None),
                 bigquery.ScalarQueryParameter("customer_tin", "STRING", data.get("customerInfo", {}).get("tin") if data.get("customerInfo") else None),
-                bigquery.ScalarQueryParameter("date", "TIMESTAMP", data.get('date').isoformat() if data.get('date') else None),
+                bigquery.ScalarQueryParameter("date", "TIMESTAMP", ts_to_iso(data.get('date'))),
                 bigquery.ScalarQueryParameter("discountAmount", "FLOAT64", float(data.get('discountAmount', 0)) if data.get('discountAmount') is not None else None),
                 bigquery.ScalarQueryParameter("grossAmount", "FLOAT64", float(data.get('grossAmount', 0)) if data.get('grossAmount') is not None else None),
                 bigquery.ScalarQueryParameter("inclusiveSerialNumber", "STRING", data.get('inclusiveSerialNumber')),
@@ -249,7 +258,7 @@ def sync_order_to_bigquery(event: firestore_fn.Event[firestore_fn.DocumentSnapsh
                 bigquery.ScalarQueryParameter("storeId", "STRING", data.get('storeId')),
                 bigquery.ScalarQueryParameter("totalAmount", "FLOAT64", float(data.get('totalAmount', 0)) if data.get('totalAmount') is not None else None),
                 bigquery.ScalarQueryParameter("uid", "STRING", data.get('uid')),
-                bigquery.ScalarQueryParameter("updatedAt", "TIMESTAMP", data.get('updatedAt').isoformat() if data.get('updatedAt') else None),
+                bigquery.ScalarQueryParameter("updatedAt", "TIMESTAMP", ts_to_iso(data.get('updatedAt'))),
                 bigquery.ScalarQueryParameter("updatedBy", "STRING", data.get('updatedBy')),
                 bigquery.ScalarQueryParameter("vatAmount", "FLOAT64", float(data.get('vatAmount', 0)) if data.get('vatAmount') is not None else None),
                 bigquery.ScalarQueryParameter("vatExemptAmount", "FLOAT64", float(data.get('vatExemptAmount', 0)) if data.get('vatExemptAmount') is not None else None),
@@ -362,13 +371,13 @@ def sync_order_to_bigquery_update(event: firestore_fn.Event[firestore_fn.Documen
                 bigquery.ScalarQueryParameter("companyName", "STRING", after.get("companyName")),
                 bigquery.ScalarQueryParameter("companyPhone", "STRING", after.get("companyPhone")),
                 bigquery.ScalarQueryParameter("companyTaxId", "STRING", after.get("companyTaxId")),
-                bigquery.ScalarQueryParameter("createdAt", "TIMESTAMP", after.get('createdAt').isoformat() if after.get('createdAt') else None),
+                bigquery.ScalarQueryParameter("createdAt", "TIMESTAMP", ts_to_iso(after.get('createdAt'))),
                 bigquery.ScalarQueryParameter("createdBy", "STRING", after.get("createdBy")),
                 bigquery.ScalarQueryParameter("customer_address", "STRING", after.get("customerInfo", {}).get("address") if after.get("customerInfo") else None),
                 bigquery.ScalarQueryParameter("customer_customerId", "STRING", after.get("customerInfo", {}).get("customerId") if after.get("customerInfo") else None),
                 bigquery.ScalarQueryParameter("customer_fullName", "STRING", after.get("customerInfo", {}).get("fullName") if after.get("customerInfo") else None),
                 bigquery.ScalarQueryParameter("customer_tin", "STRING", after.get("customerInfo", {}).get("tin") if after.get("customerInfo") else None),
-                bigquery.ScalarQueryParameter("date", "TIMESTAMP", after.get('date').isoformat() if after.get('date') else None),
+                bigquery.ScalarQueryParameter("date", "TIMESTAMP", ts_to_iso(after.get('date'))),
                 bigquery.ScalarQueryParameter("discountAmount", "FLOAT64", float(after.get('discountAmount', 0)) if after.get('discountAmount') is not None else None),
                 bigquery.ScalarQueryParameter("grossAmount", "FLOAT64", float(after.get('grossAmount', 0)) if after.get('grossAmount') is not None else None),
                 bigquery.ScalarQueryParameter("inclusiveSerialNumber", "STRING", after.get("inclusiveSerialNumber")),
@@ -383,7 +392,7 @@ def sync_order_to_bigquery_update(event: firestore_fn.Event[firestore_fn.Documen
                 bigquery.ScalarQueryParameter("storeId", "STRING", after.get('storeId')),
                 bigquery.ScalarQueryParameter("totalAmount", "FLOAT64", float(after.get('totalAmount', 0)) if after.get('totalAmount') is not None else None),
                 bigquery.ScalarQueryParameter("uid", "STRING", after.get('uid')),
-                bigquery.ScalarQueryParameter("updatedAt", "TIMESTAMP", after.get('updatedAt').isoformat() if after.get('updatedAt') else None),
+                bigquery.ScalarQueryParameter("updatedAt", "TIMESTAMP", ts_to_iso(after.get('updatedAt'))),
                 bigquery.ScalarQueryParameter("updatedBy", "STRING", after.get('updatedBy')),
                 bigquery.ScalarQueryParameter("vatAmount", "FLOAT64", float(after.get('vatAmount', 0)) if after.get('vatAmount') is not None else None),
                 bigquery.ScalarQueryParameter("vatExemptAmount", "FLOAT64", float(after.get('vatExemptAmount', 0)) if after.get('vatExemptAmount') is not None else None),
@@ -566,35 +575,20 @@ def sync_products_to_bigquery(event: firestore_fn.Event[firestore_fn.DocumentSna
     """Sync newly created Firestore product documents into BigQuery products table."""
     print("🔥 Firestore trigger activated for new product - BigQuery sync")
 
+    product_id = event.params["productId"]
+    data = event.data.to_dict()
+
+    print(f"📄 Document ID: {product_id}")
+    print(f"📦 Document data: {data}")
+    print(f"📋 Available fields: {list(data.keys()) if data else 'No fields'}")
+
+    if not data:
+        print("⚠️ Warning: Document data is empty!")
+        return
+
     try:
-        product_id = event.params.get("productId")
-        data = event.data.to_dict()
-
-        print(f"📄 Product Document ID: {product_id}")
-        print(f"📦 Product data: {data}")
-
-        if not data:
-            print("⚠️ Warning: Product document data is empty!")
-            return
-        # Only sync products created within the last 14 days
-        try:
-            created_at = data.get("createdAt")
-            if created_at:
-                # Normalize to UTC naive for comparison
-                if getattr(created_at, 'tzinfo', None):
-                    created_at_dt = created_at.astimezone(timezone.utc).replace(tzinfo=None)
-                else:
-                    created_at_dt = created_at
-
-                cutoff = datetime.utcnow() - timedelta(days=14)
-                if created_at_dt < cutoff:
-                    print(f"⏭️ Product {product_id} created at {created_at_dt} is older than 14 days — skipping sync")
-                    return
-        except Exception as e:
-            print(f"⚠️ Warning checking createdAt for recency: {e} — continuing with sync")
-
         client = get_bigquery_client()
-
+        
         # Check if productId already exists in BigQuery
         check_query = f"SELECT COUNT(*) as count FROM `{BIGQUERY_PRODUCTS_TABLE}` WHERE productId = @productId"
         check_params = [bigquery.ScalarQueryParameter("productId", "STRING", product_id)]
@@ -605,105 +599,148 @@ def sync_products_to_bigquery(event: firestore_fn.Event[firestore_fn.DocumentSna
         if result[0].count > 0:
             print(f"⏭️ Product {product_id} already exists in BigQuery - skipping duplicate insert")
             return
+        
+        # Prepare payload for BigQuery (matching your schema)
+        payload = {
+            "barcodeId": data.get("barcodeId"),
+            "category": data.get("category"),
+            "companyId": data.get("companyId"),
+            "createdAt": ts_to_iso(data.get("createdAt")),
+            "createdBy": data.get("createdBy"),
+            "description": data.get("description"),
+            "discountType": data.get("discountType"),
+            "discountValue": float(data.get("discountValue", 0)) if data.get("discountValue") is not None else None,
+            "hasDiscount": bool(data.get("hasDiscount", False)),
+            "imageUrl": data.get("imageUrl"),
+            "isFavorite": bool(data.get("isFavorite", False)),
+            "isVatApplicable": bool(data.get("isVatApplicable", False)),
+            "productCode": data.get("productCode"),
+            "productName": data.get("productName"),
+            "sellingPrice": float(data.get("sellingPrice", 0)) if data.get("sellingPrice") is not None else None,
+            "skuId": data.get("skuId"),
+            "status": data.get("status"),
+            "storeId": data.get("storeId"),
+            "totalStock": int(data.get("totalStock", 0)) if data.get("totalStock") is not None else None,
+            "uid": data.get("uid"),
+            "unitType": data.get("unitType"),
+            "updatedAt": ts_to_iso(data.get("updatedAt")),
+            "updatedBy": data.get("updatedBy")
+        }
+        
+        # Remove null values and convert Decimal to JSON-friendly types
+        def clean_payload(obj):
+            if isinstance(obj, dict):
+                return {k: clean_payload(v) for k, v in obj.items() if v is not None}
+            if isinstance(obj, list):
+                return [clean_payload(v) for v in obj]
+            if isinstance(obj, Decimal):
+                return str(obj)
+            return obj
+        
+        payload = clean_payload(payload)
+        
+        # Add the Firestore document ID as a field
+        payload["productId"] = product_id
+        
+        print(f"🧹 Cleaned payload for BigQuery: {payload}")
 
-        # Build payload using centralized helper to standardize column names
-        payload = build_product_payload(product_id, data)
-
-        print("🔀 Using MERGE to insert if not exists (idempotent)")
+        # Use MERGE to perform an idempotent upsert based on productId
         try:
-            # Build MERGE statement that inserts when productId does not exist
             merge_query = f"""
             MERGE `{BIGQUERY_PRODUCTS_TABLE}` T
             USING (SELECT @productId AS productId) S
             ON T.productId = S.productId
+            WHEN MATCHED THEN
+              UPDATE SET
+                barcodeId = @barcodeId,
+                category = @category,
+                companyId = @companyId,
+                createdAt = SAFE_CAST(@createdAt AS TIMESTAMP),
+                createdBy = @createdBy,
+                description = @description,
+                discountType = @discountType,
+                discountValue = @discountValue,
+                hasDiscount = @hasDiscount,
+                imageUrl = @imageUrl,
+                isFavorite = @isFavorite,
+                isVatApplicable = @isVatApplicable,
+                productCode = @productCode,
+                productName = @productName,
+                sellingPrice = @sellingPrice,
+                skuId = @skuId,
+                status = @status,
+                storeId = @storeId,
+                totalStock = @totalStock,
+                uid = @uid,
+                unitType = @unitType,
+                updatedAt = SAFE_CAST(@updatedAt AS TIMESTAMP),
+                updatedBy = @updatedBy
             WHEN NOT MATCHED THEN
               INSERT (productId, barcodeId, category, companyId, createdAt, createdBy, description, discountType, discountValue, hasDiscount, imageUrl, isFavorite, isVatApplicable, productCode, productName, sellingPrice, skuId, status, storeId, totalStock, uid, unitType, updatedAt, updatedBy)
               VALUES(@productId, @barcodeId, @category, @companyId, SAFE_CAST(@createdAt AS TIMESTAMP), @createdBy, @description, @discountType, @discountValue, @hasDiscount, @imageUrl, @isFavorite, @isVatApplicable, @productCode, @productName, @sellingPrice, @skuId, @status, @storeId, @totalStock, @uid, @unitType, SAFE_CAST(@updatedAt AS TIMESTAMP), @updatedBy)
             """
 
-            # Prepare query parameters (use appropriate types and None where missing)
             params = [
                 bigquery.ScalarQueryParameter("productId", "STRING", product_id),
                 bigquery.ScalarQueryParameter("barcodeId", "STRING", data.get("barcodeId")),
                 bigquery.ScalarQueryParameter("category", "STRING", data.get("category")),
                 bigquery.ScalarQueryParameter("companyId", "STRING", data.get("companyId")),
-                bigquery.ScalarQueryParameter("createdAt", "TIMESTAMP", data.get("createdAt").isoformat() if data.get("createdAt") else None),
+                bigquery.ScalarQueryParameter("createdAt", "TIMESTAMP", ts_to_iso(data.get('createdAt'))),
                 bigquery.ScalarQueryParameter("createdBy", "STRING", data.get("createdBy")),
                 bigquery.ScalarQueryParameter("description", "STRING", data.get("description")),
                 bigquery.ScalarQueryParameter("discountType", "STRING", data.get("discountType")),
-                bigquery.ScalarQueryParameter("discountValue", "FLOAT64", float(data.get("discountValue")) if data.get("discountValue") is not None else None),
-                bigquery.ScalarQueryParameter("hasDiscount", "BOOL", bool(data.get("hasDiscount", False))),
-                bigquery.ScalarQueryParameter("imageUrl", "STRING", data.get("imageUrl")),
-                bigquery.ScalarQueryParameter("isFavorite", "BOOL", bool(data.get("isFavorite", False))),
-                bigquery.ScalarQueryParameter("isVatApplicable", "BOOL", bool(data.get("isVatApplicable", False))),
-                bigquery.ScalarQueryParameter("productCode", "STRING", data.get("productCode")),
-                bigquery.ScalarQueryParameter("productName", "STRING", data.get("productName")),
-                bigquery.ScalarQueryParameter("sellingPrice", "FLOAT64", float(data.get("sellingPrice")) if data.get("sellingPrice") is not None else None),
-                bigquery.ScalarQueryParameter("skuId", "STRING", data.get("skuId")),
-                bigquery.ScalarQueryParameter("status", "STRING", data.get("status")),
-                bigquery.ScalarQueryParameter("storeId", "STRING", data.get("storeId")),
-                bigquery.ScalarQueryParameter("totalStock", "INT64", int(data.get("totalStock")) if data.get("totalStock") is not None else None),
-                bigquery.ScalarQueryParameter("uid", "STRING", data.get("uid")),
-                bigquery.ScalarQueryParameter("unitType", "STRING", data.get("unitType")),
-                bigquery.ScalarQueryParameter("updatedAt", "TIMESTAMP", data.get("updatedAt").isoformat() if data.get("updatedAt") else None),
-                bigquery.ScalarQueryParameter("updatedBy", "STRING", data.get("updatedBy"))
+                bigquery.ScalarQueryParameter("discountValue", "FLOAT64", float(data.get('discountValue', 0)) if data.get('discountValue') is not None else None),
+                bigquery.ScalarQueryParameter("hasDiscount", "BOOL", bool(data.get('hasDiscount', False))),
+                bigquery.ScalarQueryParameter("imageUrl", "STRING", data.get('imageUrl')),
+                bigquery.ScalarQueryParameter("isFavorite", "BOOL", bool(data.get('isFavorite', False))),
+                bigquery.ScalarQueryParameter("isVatApplicable", "BOOL", bool(data.get('isVatApplicable', False))),
+                bigquery.ScalarQueryParameter("productCode", "STRING", data.get('productCode')),
+                bigquery.ScalarQueryParameter("productName", "STRING", data.get('productName')),
+                bigquery.ScalarQueryParameter("sellingPrice", "FLOAT64", float(data.get('sellingPrice', 0)) if data.get('sellingPrice') is not None else None),
+                bigquery.ScalarQueryParameter("skuId", "STRING", data.get('skuId')),
+                bigquery.ScalarQueryParameter("status", "STRING", data.get('status')),
+                bigquery.ScalarQueryParameter("storeId", "STRING", data.get('storeId')),
+                bigquery.ScalarQueryParameter("totalStock", "INT64", int(data.get('totalStock', 0)) if data.get('totalStock') is not None else None),
+                bigquery.ScalarQueryParameter("uid", "STRING", data.get('uid')),
+                bigquery.ScalarQueryParameter("unitType", "STRING", data.get('unitType')),
+                bigquery.ScalarQueryParameter("updatedAt", "TIMESTAMP", ts_to_iso(data.get('updatedAt'))),
+                bigquery.ScalarQueryParameter("updatedBy", "STRING", data.get('updatedBy'))
             ]
 
             job_config = bigquery.QueryJobConfig(query_parameters=params)
             query_job = client.query(merge_query, job_config=job_config)
-            query_job.result()  # Wait for completion
-            print(f"✅ MERGE completed for product {product_id}")
-
-        except Exception as e:
-            # If MERGE fails, fallback to insert_rows_json (best-effort)
-            print(f"⚠️ MERGE failed: {e} — falling back to streaming insert")
-            try:
-                table = client.get_table(BIGQUERY_PRODUCTS_TABLE)
-                errors = client.insert_rows_json(table, [payload])
-                if errors:
-                    print(f"❌ BigQuery insert fallback failed: {errors}")
-                else:
-                    print(f"✅ Fallback insert successful for product {product_id}")
-            except Exception as ie:
-                print(f"❌ Fallback insert also failed: {ie}")
+            query_job.result()
+            print(f"✅ MERGE upsert completed for product {product_id}")
+        except Exception as me:
+            print(f"❌ MERGE failed for product {product_id}: {me}")
 
     except Exception as e:
-        print(f"❌ Unexpected error syncing product to BigQuery: {e}")
-
-
-# Streaming insert variant removed - duplicate decorator was causing conflicts
-# The main sync_products_to_bigquery function handles both MERGE and fallback streaming insert
+        print(f"❌ Unexpected error syncing to BigQuery: {e}")
 
 
 # Products update handler: COMPLETE field update using MERGE (updates ALL fields from Firestore)
 @firestore_fn.on_document_updated(document="products/{productId}", region="asia-east1")
 def sync_products_to_bigquery_update(event: firestore_fn.Event[firestore_fn.DocumentSnapshot]) -> None:
-    """Sync updated Firestore product documents into BigQuery (MERGE -> update existing row).
-
-    This performs a MERGE that updates ALL FIELDS when matched and inserts when not matched
-    (idempotent and comprehensive)."""
     print("🔁 Firestore trigger activated for updated product - BigQuery sync")
-
     try:
         product_id = event.params.get("productId")
-        # event.data has before/after; use after (complete document state)
         after = event.data.after.to_dict()
 
-        print(f"📄 Product Document ID (updated): {product_id}")
+        print(f"📄 Product ID (updated): {product_id}")
         print(f"📦 New product data (ALL FIELDS): {after}")
         print(f"📋 Updating ALL fields for productId: {product_id}")
 
         if not after:
-            print("⚠️ Warning: Updated product document has no data — skipping")
+            print("⚠️ Warning: Updated product document empty — skipping")
             return
-            
+        
         if not product_id:
             print("⚠️ Warning: Product ID is missing — skipping")
             return
 
         client = get_bigquery_client()
         
-        # Verify the product exists before updating (informational)
+        # Verify the product exists in BigQuery before updating
         check_query = f"SELECT COUNT(*) as count FROM `{BIGQUERY_PRODUCTS_TABLE}` WHERE productId = @productId"
         check_params = [bigquery.ScalarQueryParameter("productId", "STRING", product_id)]
         check_job_config = bigquery.QueryJobConfig(query_parameters=check_params)
@@ -711,100 +748,316 @@ def sync_products_to_bigquery_update(event: firestore_fn.Event[firestore_fn.Docu
         result = list(check_job.result())
         
         if result[0].count == 0:
-            print(f"⚠️ Product {product_id} does not exist in BigQuery - MERGE will create new record")
+            print(f"⚠️ Product {product_id} does not exist in BigQuery - creating new record instead of update")
         else:
-            print(f"✅ Product {product_id} exists in BigQuery - MERGE will update ALL fields")
+            print(f"✅ Product {product_id} exists in BigQuery - proceeding with complete field update")
 
-        # Build MERGE statement to update existing row or insert if missing
-        merge_query = f"""
-        MERGE `{BIGQUERY_PRODUCTS_TABLE}` T
-        USING (SELECT @productId AS productId) S
-        ON T.productId = S.productId
-        WHEN MATCHED THEN
-          UPDATE SET
-            barcodeId = @barcodeId,
-            category = @category,
-            companyId = @companyId,
-            createdAt = SAFE_CAST(@createdAt AS TIMESTAMP),
-            createdBy = @createdBy,
-            description = @description,
-            discountType = @discountType,
-            discountValue = @discountValue,
-            hasDiscount = @hasDiscount,
-            imageUrl = @imageUrl,
-            isFavorite = @isFavorite,
-            isVatApplicable = @isVatApplicable,
-            productCode = @productCode,
-            productName = @productName,
-            sellingPrice = @sellingPrice,
-            skuId = @skuId,
-            status = @status,
-            storeId = @storeId,
-            totalStock = @totalStock,
-            uid = @uid,
-            unitType = @unitType,
-            updatedAt = SAFE_CAST(@updatedAt AS TIMESTAMP),
-            updatedBy = @updatedBy
-        WHEN NOT MATCHED THEN
-          INSERT (productId, barcodeId, category, companyId, createdAt, createdBy, description, discountType, discountValue, hasDiscount, imageUrl, isFavorite, isVatApplicable, productCode, productName, sellingPrice, skuId, status, storeId, totalStock, uid, unitType, updatedAt, updatedBy)
-          VALUES(@productId, @barcodeId, @category, @companyId, SAFE_CAST(@createdAt AS TIMESTAMP), @createdBy, @description, @discountType, @discountValue, @hasDiscount, @imageUrl, @isFavorite, @isVatApplicable, @productCode, @productName, @sellingPrice, @skuId, @status, @storeId, @totalStock, @uid, @unitType, SAFE_CAST(@updatedAt AS TIMESTAMP), @updatedBy)
-        """
+        # Use MERGE to upsert the updated product (idempotent)
+        try:
+            merge_query = f"""
+            MERGE `{BIGQUERY_PRODUCTS_TABLE}` T
+            USING (SELECT @productId AS productId) S
+            ON T.productId = S.productId
+            WHEN MATCHED THEN
+              UPDATE SET
+                barcodeId = @barcodeId,
+                category = @category,
+                companyId = @companyId,
+                createdAt = SAFE_CAST(@createdAt AS TIMESTAMP),
+                createdBy = @createdBy,
+                description = @description,
+                discountType = @discountType,
+                discountValue = @discountValue,
+                hasDiscount = @hasDiscount,
+                imageUrl = @imageUrl,
+                isFavorite = @isFavorite,
+                isVatApplicable = @isVatApplicable,
+                productCode = @productCode,
+                productName = @productName,
+                sellingPrice = @sellingPrice,
+                skuId = @skuId,
+                status = @status,
+                storeId = @storeId,
+                totalStock = @totalStock,
+                uid = @uid,
+                unitType = @unitType,
+                updatedAt = SAFE_CAST(@updatedAt AS TIMESTAMP),
+                updatedBy = @updatedBy
+            WHEN NOT MATCHED THEN
+              INSERT (productId, barcodeId, category, companyId, createdAt, createdBy, description, discountType, discountValue, hasDiscount, imageUrl, isFavorite, isVatApplicable, productCode, productName, sellingPrice, skuId, status, storeId, totalStock, uid, unitType, updatedAt, updatedBy)
+              VALUES(@productId, @barcodeId, @category, @companyId, SAFE_CAST(@createdAt AS TIMESTAMP), @createdBy, @description, @discountType, @discountValue, @hasDiscount, @imageUrl, @isFavorite, @isVatApplicable, @productCode, @productName, @sellingPrice, @skuId, @status, @storeId, @totalStock, @uid, @unitType, SAFE_CAST(@updatedAt AS TIMESTAMP), @updatedBy)
+            """
 
-        # Prepare parameters (mirror create handler types)
-        params = [
-            bigquery.ScalarQueryParameter("productId", "STRING", product_id),
-            bigquery.ScalarQueryParameter("barcodeId", "STRING", after.get("barcodeId")),
-            bigquery.ScalarQueryParameter("category", "STRING", after.get("category")),
-            bigquery.ScalarQueryParameter("companyId", "STRING", after.get("companyId")),
-            bigquery.ScalarQueryParameter("createdAt", "TIMESTAMP", after.get("createdAt").isoformat() if after.get("createdAt") else None),
-            bigquery.ScalarQueryParameter("createdBy", "STRING", after.get("createdBy")),
-            bigquery.ScalarQueryParameter("description", "STRING", after.get("description")),
-            bigquery.ScalarQueryParameter("discountType", "STRING", after.get("discountType")),
-            bigquery.ScalarQueryParameter("discountValue", "FLOAT64", float(after.get("discountValue")) if after.get("discountValue") is not None else None),
-            bigquery.ScalarQueryParameter("hasDiscount", "BOOL", bool(after.get("hasDiscount", False))),
-            bigquery.ScalarQueryParameter("imageUrl", "STRING", after.get("imageUrl")),
-            bigquery.ScalarQueryParameter("isFavorite", "BOOL", bool(after.get("isFavorite", False))),
-            bigquery.ScalarQueryParameter("isVatApplicable", "BOOL", bool(after.get("isVatApplicable", False))),
-            bigquery.ScalarQueryParameter("productCode", "STRING", after.get("productCode")),
-            bigquery.ScalarQueryParameter("productName", "STRING", after.get("productName")),
-            bigquery.ScalarQueryParameter("sellingPrice", "FLOAT64", float(after.get("sellingPrice")) if after.get("sellingPrice") is not None else None),
-            bigquery.ScalarQueryParameter("skuId", "STRING", after.get("skuId")),
-            bigquery.ScalarQueryParameter("status", "STRING", after.get("status")),
-            bigquery.ScalarQueryParameter("storeId", "STRING", after.get("storeId")),
-            bigquery.ScalarQueryParameter("totalStock", "INT64", int(after.get("totalStock")) if after.get("totalStock") is not None else None),
-            bigquery.ScalarQueryParameter("uid", "STRING", after.get("uid")),
-            bigquery.ScalarQueryParameter("unitType", "STRING", after.get("unitType")),
-            bigquery.ScalarQueryParameter("updatedAt", "TIMESTAMP", after.get("updatedAt").isoformat() if after.get("updatedAt") else None),
-            bigquery.ScalarQueryParameter("updatedBy", "STRING", after.get("updatedBy"))
-        ]
+            params = [
+                bigquery.ScalarQueryParameter("productId", "STRING", product_id),
+                bigquery.ScalarQueryParameter("barcodeId", "STRING", after.get("barcodeId")),
+                bigquery.ScalarQueryParameter("category", "STRING", after.get("category")),
+                bigquery.ScalarQueryParameter("companyId", "STRING", after.get("companyId")),
+                bigquery.ScalarQueryParameter("createdAt", "TIMESTAMP", ts_to_iso(after.get('createdAt'))),
+                bigquery.ScalarQueryParameter("createdBy", "STRING", after.get("createdBy")),
+                bigquery.ScalarQueryParameter("description", "STRING", after.get("description")),
+                bigquery.ScalarQueryParameter("discountType", "STRING", after.get("discountType")),
+                bigquery.ScalarQueryParameter("discountValue", "FLOAT64", float(after.get('discountValue', 0)) if after.get('discountValue') is not None else None),
+                bigquery.ScalarQueryParameter("hasDiscount", "BOOL", bool(after.get('hasDiscount', False))),
+                bigquery.ScalarQueryParameter("imageUrl", "STRING", after.get('imageUrl')),
+                bigquery.ScalarQueryParameter("isFavorite", "BOOL", bool(after.get('isFavorite', False))),
+                bigquery.ScalarQueryParameter("isVatApplicable", "BOOL", bool(after.get('isVatApplicable', False))),
+                bigquery.ScalarQueryParameter("productCode", "STRING", after.get('productCode')),
+                bigquery.ScalarQueryParameter("productName", "STRING", after.get('productName')),
+                bigquery.ScalarQueryParameter("sellingPrice", "FLOAT64", float(after.get('sellingPrice', 0)) if after.get('sellingPrice') is not None else None),
+                bigquery.ScalarQueryParameter("skuId", "STRING", after.get('skuId')),
+                bigquery.ScalarQueryParameter("status", "STRING", after.get('status')),
+                bigquery.ScalarQueryParameter("storeId", "STRING", after.get('storeId')),
+                bigquery.ScalarQueryParameter("totalStock", "INT64", int(after.get('totalStock', 0)) if after.get('totalStock') is not None else None),
+                bigquery.ScalarQueryParameter("uid", "STRING", after.get('uid')),
+                bigquery.ScalarQueryParameter("unitType", "STRING", after.get('unitType')),
+                bigquery.ScalarQueryParameter("updatedAt", "TIMESTAMP", ts_to_iso(after.get('updatedAt'))),
+                bigquery.ScalarQueryParameter("updatedBy", "STRING", after.get('updatedBy'))
+            ]
 
-        job_config = bigquery.QueryJobConfig(query_parameters=params)
-        query_job = client.query(merge_query, job_config=job_config)
-        query_job.result()
-        print(f"✅ MERGE (update) completed for product {product_id}")
+            job_config = bigquery.QueryJobConfig(query_parameters=params)
+            query_job = client.query(merge_query, job_config=job_config)
+            query_job.result()
+            print(f"✅ MERGE upsert completed for updated product {product_id}")
+        except Exception as me:
+            print(f"❌ MERGE (update) failed for product {product_id}: {me}")
 
     except Exception as e:
         print(f"❌ Unexpected error syncing updated product to BigQuery: {e}")
 
 
-# BigQuery trigger for deleted product documents
+# Products delete handler
 @firestore_fn.on_document_deleted(document="products/{productId}", region="asia-east1")
 def sync_products_to_bigquery_delete(event: firestore_fn.Event[firestore_fn.DocumentSnapshot]) -> None:
-    """Remove product row from BigQuery when Firestore product is deleted."""
-    print("🗑️ Firestore trigger activated for product delete - BigQuery sync")
-
+    print("🗑️ Firestore trigger activated for deleted product - BigQuery sync")
     try:
         product_id = event.params.get("productId")
-        print(f"📄 Product Document ID (deleted): {product_id}")
-
         client = get_bigquery_client()
-
         delete_query = f"DELETE FROM `{BIGQUERY_PRODUCTS_TABLE}` WHERE productId = @productId"
         params = [bigquery.ScalarQueryParameter("productId", "STRING", product_id)]
         job_config = bigquery.QueryJobConfig(query_parameters=params)
-        query_job = client.query(delete_query, job_config=job_config)
-        query_job.result()
+        job = client.query(delete_query, job_config=job_config)
+        job.result()
         print(f"✅ Deleted product {product_id} from BigQuery (if existed)")
-
     except Exception as e:
         print(f"❌ Unexpected error deleting product from BigQuery: {e}")
+
+
+# OrderSellingTracking: create handler
+@firestore_fn.on_document_created(document="ordersSellingTracking/{orderSellingTrackingId}", region="asia-east1")
+def sync_order_selling_tracking_to_bigquery(event: firestore_fn.Event[firestore_fn.DocumentSnapshot]) -> None:
+    print("🔥 Firestore trigger activated for new orderSellingTracking - BigQuery sync")
+
+    ost_id = event.params["orderSellingTrackingId"]
+    data = event.data.to_dict()
+
+    print(f"📄 orderSellingTracking Document ID: {ost_id}")
+    print(f"📦 Document data: {data}")
+    print(f"📋 Available fields: {list(data.keys()) if data else 'No fields'}")
+
+    if not data:
+        print("⚠️ Warning: orderSellingTracking document data is empty!")
+        return
+
+    try:
+        client = get_bigquery_client()
+        
+        # Check if ordersSellingTracking already exists in BigQuery to avoid duplicate inserts
+        check_query = f"SELECT COUNT(*) as count FROM `{BIGQUERY_ORDER_SELLING_TRACKING_TABLE}` WHERE ordersSellingTrackingId = @ostId"
+        check_params = [bigquery.ScalarQueryParameter("ostId", "STRING", ost_id)]
+        check_job_config = bigquery.QueryJobConfig(query_parameters=check_params)
+        check_job = client.query(check_query, job_config=check_job_config)
+        result = list(check_job.result())
+        
+        if result[0].count > 0:
+            print(f"⏭️ orderSellingTracking {ost_id} already exists in BigQuery - skipping duplicate insert")
+            return
+
+        # Build payload with updated field schema to match new Firestore structure
+        # Match BigQuery types: INT64 for batchNumber/quantity/itemIndex; NUMERIC for price/discount/vat/total
+        def to_int(v):
+            try:
+                return int(v) if v is not None else None
+            except Exception:
+                return None
+
+        def to_numeric(v):
+            try:
+                if v is None:
+                    return None
+                # Accept Decimal, int, float, or numeric string
+                if isinstance(v, Decimal):
+                    return v
+                return Decimal(str(v))
+            except (InvalidOperation, ValueError, TypeError):
+                return None
+
+        payload = {
+            "ordersSellingTrackingId": ost_id,
+            "batchNumber": to_int(data.get("batchNumber")),
+            "companyId": data.get("companyId"),
+            "createdAt": ts_to_iso(data.get("createdAt")),
+            "createdBy": data.get("createdBy"),
+            "orderId": data.get("orderId"),
+            "orderDetailsId": data.get("orderDetailsId"),
+            "status": data.get("status"),
+            "storeId": data.get("storeId"),
+            "uid": data.get("uid"),
+            "updatedAt": ts_to_iso(data.get("updatedAt")),
+            "updatedBy": data.get("updatedBy"),
+            "itemIndex": to_int(data.get("itemIndex")),
+            "productId": data.get("productId"),
+            "productName": data.get("productName"),
+            "price": to_numeric(data.get("price")),
+            "quantity": to_int(data.get("quantity")),
+            "discount": to_numeric(data.get("discount")),
+            "discountType": data.get("discountType"),
+            "vat": to_numeric(data.get("vat")),
+            "total": to_numeric(data.get("total")),
+            "isVatExempt": bool(data.get("isVatExempt", False)),
+        }
+
+        # Clean None values and convert Decimal to JSON-friendly types
+        def clean_payload(obj):
+            if isinstance(obj, dict):
+                return {k: clean_payload(v) for k, v in obj.items() if v is not None}
+            if isinstance(obj, list):
+                return [clean_payload(v) for v in obj]
+            if isinstance(obj, Decimal):
+                return str(obj)
+            return obj
+
+        payload = clean_payload(payload)
+
+        print(f"🧹 Final payload for BigQuery (orderSellingTracking): {payload}")
+
+        # Use streaming insert for orderSellingTracking (keeps nested items intact)
+        try:
+            table = client.get_table(BIGQUERY_ORDER_SELLING_TRACKING_TABLE)
+            print(f"📤 Inserting payload into {BIGQUERY_ORDER_SELLING_TRACKING_TABLE}")
+            errors = client.insert_rows_json(table, [payload])
+            if errors:
+                print(f"❌ BigQuery insert failed with errors: {errors}")
+            else:
+                print(f"✅ BigQuery insert successful for orderSellingTracking {ost_id}")
+        except Exception as ie:
+            print(f"❌ Exception while inserting orderSellingTracking to BigQuery: {ie}")
+
+    except Exception as e:
+        print(f"❌ Unexpected error syncing orderSellingTracking to BigQuery: {e}")
+
+
+# OrderSellingTracking update handler: Re-added for new schema
+@firestore_fn.on_document_updated(document="ordersSellingTracking/{orderSellingTrackingId}", region="asia-east1")
+def sync_order_selling_tracking_update(event: firestore_fn.Event[firestore_fn.DocumentSnapshot]) -> None:
+    print("🔁 Firestore trigger activated for updated orderSellingTracking - BigQuery sync")
+    try:
+        ost_id = event.params.get("orderSellingTrackingId")
+        after = event.data.after.to_dict()
+
+        print(f"📄 orderSellingTracking ID (updated): {ost_id}")
+        print(f"📦 New data: {after}")
+
+        if not after:
+            print("⚠️ Warning: updated document empty — skipping")
+            return
+
+        client = get_bigquery_client()
+
+        # Delete existing row (if any) and re-insert full payload (mirrors orderDetails update flow)
+        try:
+            delete_query = f"DELETE FROM `{BIGQUERY_ORDER_SELLING_TRACKING_TABLE}` WHERE ordersSellingTrackingId = @orderSellingTrackingId"
+            params = [bigquery.ScalarQueryParameter("orderSellingTrackingId", "STRING", ost_id)]
+            job_config = bigquery.QueryJobConfig(query_parameters=params)
+            delete_job = client.query(delete_query, job_config=job_config)
+            delete_job.result()
+            print(f"🗑️ Removed existing orderSellingTracking {ost_id} (if any)")
+        except Exception as de:
+            print(f"⚠️ Warning deleting existing orderSellingTracking row: {de}")
+
+        # Recreate payload from the updated document with new schema
+        # Recreate payload from the updated document with new schema
+        def to_int(v):
+            try:
+                return int(v) if v is not None else None
+            except Exception:
+                return None
+
+        def to_numeric(v):
+            try:
+                if v is None:
+                    return None
+                if isinstance(v, Decimal):
+                    return v
+                return Decimal(str(v))
+            except (InvalidOperation, ValueError, TypeError):
+                return None
+
+        payload = {
+            "ordersSellingTrackingId": ost_id,
+            "batchNumber": to_int(after.get("batchNumber")),
+            "companyId": after.get("companyId"),
+            "createdAt": ts_to_iso(after.get("createdAt")),
+            "createdBy": after.get("createdBy"),
+            "orderId": after.get("orderId"),
+            "orderDetailsId": after.get("orderDetailsId"),
+            "status": after.get("status"),
+            "storeId": after.get("storeId"),
+            "uid": after.get("uid"),
+            "updatedAt": ts_to_iso(after.get("updatedAt")),
+            "updatedBy": after.get("updatedBy"),
+            "itemIndex": to_int(after.get("itemIndex")),
+            "productId": after.get("productId"),
+            "productName": after.get("productName"),
+            "price": to_numeric(after.get("price")),
+            "quantity": to_int(after.get("quantity")),
+            "discount": to_numeric(after.get("discount")),
+            "discountType": after.get("discountType"),
+            "vat": to_numeric(after.get("vat")),
+            "total": to_numeric(after.get("total")),
+            "isVatExempt": bool(after.get("isVatExempt", False)),
+        }
+
+        # Clean payload and convert Decimal to JSON-friendly types
+        def clean_payload(obj):
+            if isinstance(obj, dict):
+                return {k: clean_payload(v) for k, v in obj.items() if v is not None}
+            if isinstance(obj, list):
+                return [clean_payload(v) for v in obj]
+            if isinstance(obj, Decimal):
+                return str(obj)
+            return obj
+
+        payload = clean_payload(payload)
+
+        try:
+            table = client.get_table(BIGQUERY_ORDER_SELLING_TRACKING_TABLE)
+            print(f"📤 Inserting (update) payload into {BIGQUERY_ORDER_SELLING_TRACKING_TABLE}: {payload}")
+            errors = client.insert_rows_json(table, [payload])
+            if errors:
+                print(f"❌ Failed to insert updated orderSellingTracking: {errors}")
+                print(f"❗ Failed payload: {payload}")
+            else:
+                print(f"✅ Re-inserted updated orderSellingTracking {ost_id}")
+        except Exception as ie:
+            print(f"❌ Exception while inserting updated orderSellingTracking to BigQuery: {ie}")
+
+    except Exception as e:
+        print(f"❌ Unexpected error syncing updated orderSellingTracking to BigQuery: {e}")
+
+
+# OrderSellingTracking delete handler
+@firestore_fn.on_document_deleted(document="orderSellingTracking/{orderSellingTrackingId}", region="asia-east1")
+def sync_order_selling_tracking_delete(event: firestore_fn.Event[firestore_fn.DocumentSnapshot]) -> None:
+    print("🗑️ Firestore trigger activated for deleted orderSellingTracking - BigQuery sync")
+    try:
+        ost_id = event.params.get("orderSellingTrackingId")
+        client = get_bigquery_client()
+        delete_query = f"DELETE FROM `{BIGQUERY_ORDER_SELLING_TRACKING_TABLE}` WHERE ordersSellingTrackingId = @orderSellingTrackingId"
+        params = [bigquery.ScalarQueryParameter("orderSellingTrackingId", "STRING", ost_id)]
+        job_config = bigquery.QueryJobConfig(query_parameters=params)
+        job = client.query(delete_query, job_config=job_config)
+        job.result()
+        print(f"✅ Deleted orderSellingTracking {ost_id} from BigQuery (if existed)")
+    except Exception as e:
+        print(f"❌ Unexpected error deleting orderSellingTracking from BigQuery: {e}")
