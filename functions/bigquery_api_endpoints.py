@@ -464,6 +464,154 @@ def sales_summary_by_product(req: https_fn.Request) -> https_fn.Response:
             headers=DEFAULT_HEADERS
         )
 
+
+# (Removed duplicate earlier definition)
+
+
+@https_fn.on_request(region="asia-east1")
+@require_auth
+def sales_summary_by_store(req: https_fn.Request) -> https_fn.Response:
+    """Get sales summary grouped by store for a given month or specific day.
+
+    Query parameters:
+    - month (YYYYMM) optional
+    - date (YYYYMMDD or YYYY-MM-DD) optional
+    At least one of month or date is required. When both are provided, the query
+    will match records where either condition is true (OR), following the provided SQL pattern.
+    """
+
+    # Handle CORS
+    if req.method == 'OPTIONS':
+        return https_fn.Response('', status=204, headers=DEFAULT_HEADERS)
+
+    month = req.args.get('month')
+    date_param = req.args.get('date')
+    status = req.args.get('status')
+
+    # Support JSON body fallback for POST clients that send JSON instead of query params
+    body = None
+    try:
+        # firebase_functions Request supports get_json similar to Flask
+        body = req.get_json(silent=True) or {}
+    except Exception:
+        body = {}
+
+    # If query params were not provided, try to read from JSON body
+    if not month:
+        month = body.get('month') or body.get('Month')
+    if not date_param:
+        # Accept both 'date' and 'day' keys in JSON body
+        date_param = body.get('date') or body.get('day')
+    if not status:
+        status = body.get('status') or body.get('Status')
+
+    if not month and not date_param:
+        return https_fn.Response(
+            json.dumps({"error": "At least one of 'month' (YYYYMM) or 'date' (YYYYMMDD or YYYY-MM-DD) is required"}),
+            status=400,
+            headers=DEFAULT_HEADERS
+        )
+
+    # Validate month format if provided
+    if month and not (len(month) == 6 and month.isdigit()):
+        return https_fn.Response(
+            json.dumps({"error": "Invalid month format. Use YYYYMM."}),
+            status=400,
+            headers=DEFAULT_HEADERS
+        )
+
+    # Parse date if provided
+    parsed_date = None
+    if date_param:
+        parsed_date = parse_date_string(date_param)
+        if not parsed_date:
+            return https_fn.Response(
+                json.dumps({"error": "Invalid date format. Use YYYYMMDD or YYYY-MM-DD."}),
+                status=400,
+                headers=DEFAULT_HEADERS
+            )
+
+    try:
+        client = get_bigquery_client()
+
+        # Base query - status is parameterized (default to 'completed' if not provided)
+        query = f"""
+        SELECT
+          o.storeId as storeId,
+          SUM(ost.total) AS totalAmount
+        FROM `{BIGQUERY_ORDER_SELLING_TRACKING_TABLE}` AS ost
+        JOIN `{BIGQUERY_ORDERS_TABLE}` AS o
+        ON ost.orderId = o.orderId
+        WHERE ost.status = @status
+        """
+
+        query_params = []
+
+        # Default status to 'completed' when not provided
+        status_value = status if status else 'completed'
+        query_params.append(bigquery.ScalarQueryParameter("status", "STRING", status_value))
+
+        clauses = []
+
+        if month:
+            clauses.append("FORMAT_TIMESTAMP('%Y%m', ost.updatedAt) = @month")
+            query_params.append(bigquery.ScalarQueryParameter("month", "STRING", month))
+
+        if parsed_date:
+            clauses.append("DATE(ost.updatedAt) = @day")
+            query_params.append(bigquery.ScalarQueryParameter("day", "DATE", parsed_date.date()))
+
+        # Combine clauses with OR to match provided SQL pattern
+        if clauses:
+            query += " AND (" + " OR ".join(clauses) + ")"
+
+        query += "\nGROUP BY o.storeId\nORDER BY o.storeId"
+
+        job_config = bigquery.QueryJobConfig(query_parameters=query_params)
+
+        print(f"🔍 BigQuery sales_summary_by_store query: {query}")
+        print(f"📋 Parameters: month={month}, date={date_param}, status={status_value}")
+
+        query_job = client.query(query, job_config=job_config)
+        results = query_job.result()
+
+        rows = []
+        for row in results:
+            r = dict(row)
+            total = r.get('totalAmount')
+            try:
+                if total is not None:
+                    total = float(total)
+            except Exception:
+                total = str(total)
+
+            rows.append({
+                "storeId": r.get('storeId'),
+                "totalAmount": total
+            })
+
+        response_data = {
+            "success": True,
+            "month": month,
+            "date": date_param,
+            "count": len(rows),
+            "rows": rows
+        }
+
+        return https_fn.Response(
+            json.dumps(response_data),
+            status=200,
+            headers=DEFAULT_HEADERS
+        )
+
+    except Exception as e:
+        print(f"❌ sales_summary_by_store BigQuery error: {e}")
+        return https_fn.Response(
+            json.dumps({"success": False, "error": str(e)}),
+            status=500,
+            headers=DEFAULT_HEADERS
+        )
+
 # API endpoint to get order count statistics aggregated by date
 @https_fn.on_request(region="asia-east1")
 @require_auth
