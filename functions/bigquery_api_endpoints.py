@@ -3,7 +3,7 @@ import json
 from datetime import datetime, timedelta
 
 # Import configuration 
-from config import get_bigquery_client, BIGQUERY_ORDERS_TABLE, BIGQUERY_ORDER_DETAILS_TABLE, BIGQUERY_PRODUCTS_TABLE, DEFAULT_HEADERS, BACKFILL_PRESETS
+from config import get_bigquery_client, BIGQUERY_ORDERS_TABLE, BIGQUERY_ORDER_DETAILS_TABLE, BIGQUERY_PRODUCTS_TABLE, BIGQUERY_ORDER_SELLING_TRACKING_TABLE, DEFAULT_HEADERS, BACKFILL_PRESETS
 from config import BQ_TABLES, COLLECTIONS
 
 # Import authentication middleware
@@ -353,6 +353,113 @@ def get_sales_summary_bq(req: https_fn.Request) -> https_fn.Response:
                 "error": str(e),
                 "message": "Failed to query sales summary from BigQuery"
             }),
+            status=500,
+            headers=DEFAULT_HEADERS
+        )
+
+
+@https_fn.on_request(region="asia-east1")
+@require_auth
+def sales_summary_by_product(req: https_fn.Request) -> https_fn.Response:
+    """Get sales summary grouped by product for a given month (YYYYMM).
+
+    Query parameters:
+    - month (required) - YYYYMM string, e.g. 202511
+    - storeId (optional) - filter by store
+    """
+
+    # Handle CORS
+    if req.method == 'OPTIONS':
+        return https_fn.Response('', status=204, headers=DEFAULT_HEADERS)
+
+    month = req.args.get('month')
+    store_id = req.args.get('storeId')
+
+    if not month:
+        return https_fn.Response(
+            json.dumps({"error": "month parameter is required (format: YYYYMM)"}),
+            status=400,
+            headers=DEFAULT_HEADERS
+        )
+
+    # Basic validation of month
+    if not (len(month) == 6 and month.isdigit()):
+        return https_fn.Response(
+            json.dumps({"error": "Invalid month format. Use YYYYMM."}),
+            status=400,
+            headers=DEFAULT_HEADERS
+        )
+
+    try:
+        client = get_bigquery_client()
+
+        query = f"""
+        SELECT
+          o.storeId as storeId,
+          o.invoiceNumber as invoiceNumber,
+          ost.productId as productId,
+          SUM(ost.total) AS totalAmount
+        FROM `{BIGQUERY_ORDER_SELLING_TRACKING_TABLE}` AS ost
+        JOIN `{BIGQUERY_ORDERS_TABLE}` AS o
+        ON ost.orderId = o.orderId
+        WHERE FORMAT_TIMESTAMP('%Y%m', ost.updatedAt) = @month
+          AND ost.status = 'completed'
+        """
+
+        query_params = [
+            bigquery.ScalarQueryParameter("month", "STRING", month)
+        ]
+
+        if store_id:
+            query += " AND o.storeId = @store_id"
+            query_params.append(bigquery.ScalarQueryParameter("store_id", "STRING", store_id))
+
+        query += "\nGROUP BY o.storeId, o.invoiceNumber, ost.productId\nORDER BY o.storeId, o.invoiceNumber, ost.productId"
+
+        job_config = bigquery.QueryJobConfig(query_parameters=query_params)
+
+        print(f"🔍 BigQuery sales_summary_by_product query: {query}")
+        print(f"📋 Parameters: month={month}, store_id={store_id}")
+
+        query_job = client.query(query, job_config=job_config)
+        results = query_job.result()
+
+        rows = []
+        for row in results:
+            r = dict(row)
+            # Convert BigQuery NUMERIC (Decimal) to float for JSON serialization
+            total = r.get('totalAmount')
+            try:
+                if total is not None:
+                    total = float(total)
+            except Exception:
+                total = str(total)
+
+            rows.append({
+                "storeId": r.get('storeId'),
+                "invoiceNumber": r.get('invoiceNumber'),
+                "productId": r.get('productId'),
+                "totalAmount": total
+            })
+
+        response_data = {
+            "success": True,
+            "month": month,
+            "storeId": store_id,
+            "count": len(rows),
+            "rows": rows
+        }
+
+        return https_fn.Response(
+            json.dumps(response_data),
+            status=200,
+            headers=DEFAULT_HEADERS
+        )
+
+    except Exception as e:
+        print(f"❌ sales_summary_by_product BigQuery error: {e}")
+        return https_fn.Response(
+            json.dumps({"success": False, "error": str(e)}),
             status=500,
             headers=DEFAULT_HEADERS
         )

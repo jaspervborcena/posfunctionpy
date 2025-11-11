@@ -105,15 +105,7 @@ def reconcile_pending(company_id: Optional[str] = None, store_id: Optional[str] 
     return {"processed": len(docs)}
 
 
-@scheduler_fn.on_schedule(schedule="0 2 * * *", timezone="Asia/Manila", region="asia-east1")
-def reconcile_daily(event: scheduler_fn.ScheduledEvent) -> None:
-    print("[reconcileDaily] Starting scheduled reconciliation job")
-    res = reconcile_pending(limit=500)
-    print("[reconcileDaily] Completed", res)
-
-
-# The callable `reconcile_on_demand` function was removed.
-# If on-demand reconciliation via a callable Cloud Function is required
-# in the future, re-add a function here with appropriate auth and
-# input validation. For now, reconciliation is available via the
-# scheduled `reconcile_daily` job and administrative tooling.
+# NOTE: The scheduled `reconcile_daily` job was removed as part of
+# the feature cleanup. If scheduled reconciliation is reintroduced
+# in the future, add a new @scheduler_fn.on_schedule-decorated function
+# here with appropriate auth and limits.

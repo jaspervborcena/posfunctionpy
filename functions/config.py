@@ -13,8 +13,8 @@ BIGQUERY_ORDERS_TABLE = f"{BIGQUERY_PROJECT_ID}.{BIGQUERY_DATASET_ID}.orders"
 BIGQUERY_ORDER_DETAILS_TABLE = f"{BIGQUERY_PROJECT_ID}.{BIGQUERY_DATASET_ID}.orderDetails"
 # BigQuery products table (matches Firestore `products` collection)
 BIGQUERY_PRODUCTS_TABLE = f"{BIGQUERY_PROJECT_ID}.{BIGQUERY_DATASET_ID}.products"
-# BigQuery order selling tracking table
-BIGQUERY_ORDER_SELLING_TRACKING_TABLE = f"{BIGQUERY_PROJECT_ID}.{BIGQUERY_DATASET_ID}.orderSellingTracking"
+# BigQuery orders selling tracking table (matches Firestore `ordersSellingTracking` collection)
+BIGQUERY_ORDER_SELLING_TRACKING_TABLE = f"{BIGQUERY_PROJECT_ID}.{BIGQUERY_DATASET_ID}.ordersSellingTracking"
 
 # Collection Names (Firestore)
 ORDERS_COLLECTION = "orders"
@@ -24,8 +24,8 @@ ORDER_DETAILS_COLLECTION = "orderDetails"
 BQ_TABLES = {
     "orders": BIGQUERY_ORDERS_TABLE,
     "orderDetails": BIGQUERY_ORDER_DETAILS_TABLE,
-    "products": BIGQUERY_PRODUCTS_TABLE
-    ,"orderSellingTracking": BIGQUERY_ORDER_SELLING_TRACKING_TABLE
+    "products": BIGQUERY_PRODUCTS_TABLE,
+    "ordersSellingTracking": BIGQUERY_ORDER_SELLING_TRACKING_TABLE
 }
 
 # Firestore collection name constants (already present but normalized)

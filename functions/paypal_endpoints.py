@@ -36,75 +36,9 @@ def _get_access_token() -> str:
     return data.get("access_token")
 
 
-@https_fn.on_request(region="asia-east1")
-def paypal_create_order(req: https_fn.Request) -> https_fn.Response:
-    if req.method == "OPTIONS":
-        return https_fn.Response("", status=204, headers={
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "POST, OPTIONS",
-            "Access-Control-Allow-Headers": "Content-Type, Authorization",
-        })
-    if req.method != "POST":
-        return https_fn.Response(json.dumps({"error": "Invalid method"}), status=405)
-    try:
-        body = req.get_json(silent=True) or {}
-        amount = body.get("amount")
-        currency = body.get("currency", "PHP")
-        description = body.get("description", "Subscription payment")
-        if not amount or float(amount) <= 0:
-            return https_fn.Response(json.dumps({"error": "Invalid amount"}), status=400)
-        access_token = _get_access_token()
-        order_body = {
-            "intent": "CAPTURE",
-            "purchase_units": [
-                {
-                    "amount": {"currency_code": currency, "value": str(amount)},
-                    "description": description,
-                }
-            ],
-        }
-        r = requests.post(
-            f"{PAYPAL_BASE}/v2/checkout/orders",
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {access_token}",
-            },
-            json=order_body,
-            timeout=30,
-        )
-        data = r.json() if r.text else {}
-        status = 200 if r.ok else 500
-        return https_fn.Response(json.dumps(data), status=status, headers={"Access-Control-Allow-Origin": "*", "Content-Type": "application/json"})
-    except Exception as e:
-        return https_fn.Response(json.dumps({"error": str(e)}), status=500, headers={"Access-Control-Allow-Origin": "*", "Content-Type": "application/json"})
+# paypal_create_order and paypal_capture_order endpoints removed per cleanup.
+# Helper functions remain for future PayPal integrations if reintroduced.
 
 
-@https_fn.on_request(region="asia-east1")
-def paypal_capture_order(req: https_fn.Request) -> https_fn.Response:
-    if req.method == "OPTIONS":
-        return https_fn.Response("", status=204, headers={
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "POST, OPTIONS",
-            "Access-Control-Allow-Headers": "Content-Type, Authorization",
-        })
-    if req.method != "POST":
-        return https_fn.Response(json.dumps({"error": "Invalid method"}), status=405)
-    try:
-        body = req.get_json(silent=True) or {}
-        order_id = body.get("orderId")
-        if not order_id:
-            return https_fn.Response(json.dumps({"error": "Missing orderId"}), status=400)
-        access_token = _get_access_token()
-        r = requests.post(
-            f"{PAYPAL_BASE}/v2/checkout/orders/{order_id}/capture",
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {access_token}",
-            },
-            timeout=30,
-        )
-        data = r.json() if r.text else {}
-        status = 200 if r.ok else 500
-        return https_fn.Response(json.dumps(data), status=status, headers={"Access-Control-Allow-Origin": "*", "Content-Type": "application/json"})
-    except Exception as e:
-        return https_fn.Response(json.dumps({"error": str(e)}), status=500, headers={"Access-Control-Allow-Origin": "*", "Content-Type": "application/json"})
+# paypal_create_order and paypal_capture_order endpoints removed per cleanup.
+# Helper functions remain for future PayPal integrations if reintroduced.
