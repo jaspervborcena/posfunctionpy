@@ -612,6 +612,112 @@ def sales_summary_by_store(req: https_fn.Request) -> https_fn.Response:
             headers=DEFAULT_HEADERS
         )
 
+
+@https_fn.on_request(region="asia-east1")
+@require_auth
+def manage_item_status(req: https_fn.Request) -> https_fn.Response:
+    """Return order item rows (joined with products) for a given storeId and orderId.
+
+    Accepts:
+    - storeId (query param or JSON body)
+    - orderId (query param or JSON body)
+    """
+
+    # CORS preflight
+    if req.method == 'OPTIONS':
+        return https_fn.Response('', status=204, headers=DEFAULT_HEADERS)
+
+    # Prefer query params but accept JSON body fallback
+    store_id = req.args.get('storeId')
+    order_id = req.args.get('orderId')
+
+    body = None
+    try:
+        body = req.get_json(silent=True) or {}
+    except Exception:
+        body = {}
+
+    if not store_id:
+        store_id = body.get('storeId') or body.get('store_id')
+    if not order_id:
+        order_id = body.get('orderId') or body.get('order_id')
+
+    if not store_id or not order_id:
+        return https_fn.Response(
+            json.dumps({"error": "storeId and orderId are required (query params or JSON body)"}),
+            status=400,
+            headers=DEFAULT_HEADERS
+        )
+
+    try:
+        client = get_bigquery_client()
+
+        query = f"""
+        SELECT
+          ost.productName as productName,
+          p.skuId AS SKU,
+          ost.quantity as quantity,
+          ost.discountType as discountType,
+          ost.discount as discount,
+          ost.vat as vat,
+          p.isVatApplicable as isVatApplicable,
+          ost.isVatExempt as isVatExempt,
+          ost.total as total,
+          ost.updatedAt as updatedAt,
+          ost.status as status
+        FROM `{BIGQUERY_ORDER_SELLING_TRACKING_TABLE}` AS ost
+        JOIN `{BIGQUERY_PRODUCTS_TABLE}` AS p
+        ON ost.productId = p.productId
+        WHERE ost.storeId = @store_id
+          AND ost.orderId = @order_id
+        ORDER BY ost.updatedAt DESC
+        """
+
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("store_id", "STRING", store_id),
+                bigquery.ScalarQueryParameter("order_id", "STRING", order_id),
+            ]
+        )
+
+        print(f"🔍 BigQuery manage_item_status query: {query}")
+        print(f"📋 Parameters: store_id={store_id}, order_id={order_id}")
+
+        query_job = client.query(query, job_config=job_config)
+        results = query_job.result()
+
+        rows = []
+        for row in results:
+            r = dict(row)
+
+            # Convert timestamp to ISO and NUMERIC/Decimal to float (fallback to string)
+            for key, value in list(r.items()):
+                if isinstance(value, datetime):
+                    r[key] = value.isoformat()
+                else:
+                    try:
+                        # handle Decimal/NUMERIC
+                        if value is not None and hasattr(value, 'as_tuple'):
+                            r[key] = float(value)
+                    except Exception:
+                        r[key] = str(value)
+
+            rows.append(r)
+
+        response_data = {
+            "success": True,
+            "storeId": store_id,
+            "orderId": order_id,
+            "count": len(rows),
+            "rows": rows
+        }
+
+        return https_fn.Response(json.dumps(response_data), status=200, headers=DEFAULT_HEADERS)
+
+    except Exception as e:
+        print(f"❌ manage_item_status BigQuery error: {e}")
+        return https_fn.Response(json.dumps({"success": False, "error": str(e)}), status=500, headers=DEFAULT_HEADERS)
+
 # API endpoint to get order count statistics aggregated by date
 @https_fn.on_request(region="asia-east1")
 @require_auth

@@ -5,7 +5,7 @@ from firebase_admin import initialize_app
 initialize_app()
 
 # Import BigQuery modules
-from bigquery_api_endpoints import get_orders_count_by_date_bq, get_orders_count_by_status_bq, get_sales_summary_bq, get_products_bq, get_orders_bq, sales_summary_by_product, sales_summary_by_store
+from bigquery_api_endpoints import get_orders_count_by_date_bq, get_orders_count_by_status_bq, get_sales_summary_bq, get_products_bq, get_orders_bq, sales_summary_by_product, sales_summary_by_store, manage_item_status
 from bigquery_triggers import (
 	sync_order_to_bigquery,
 	sync_order_details_to_bigquery,
