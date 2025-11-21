@@ -964,16 +964,8 @@ def sync_order_selling_tracking_update(event: firestore_fn.Event[firestore_fn.Do
 
         client = get_bigquery_client()
 
-        # Delete existing row (if any) and re-insert full payload (mirrors orderDetails update flow)
-        try:
-            delete_query = f"DELETE FROM `{BIGQUERY_ORDER_SELLING_TRACKING_TABLE}` WHERE ordersSellingTrackingId = @orderSellingTrackingId"
-            params = [bigquery.ScalarQueryParameter("orderSellingTrackingId", "STRING", ost_id)]
-            job_config = bigquery.QueryJobConfig(query_parameters=params)
-            delete_job = client.query(delete_query, job_config=job_config)
-            delete_job.result()
-            print(f"🗑️ Removed existing orderSellingTracking {ost_id} (if any)")
-        except Exception as de:
-            print(f"⚠️ Warning deleting existing orderSellingTracking row: {de}")
+        # Use MERGE for proper upsert instead of DELETE+INSERT to avoid data loss
+        # This ensures atomicity and handles both insert and update cases safely
 
         # Recreate payload from the updated document with new schema
         # Recreate payload from the updated document with new schema
@@ -1030,24 +1022,93 @@ def sync_order_selling_tracking_update(event: firestore_fn.Event[firestore_fn.Do
 
         payload = clean_payload(payload)
 
-        try:
-            table = client.get_table(BIGQUERY_ORDER_SELLING_TRACKING_TABLE)
-            print(f"📤 Inserting (update) payload into {BIGQUERY_ORDER_SELLING_TRACKING_TABLE}: {payload}")
-            errors = client.insert_rows_json(table, [payload])
-            if errors:
-                print(f"❌ Failed to insert updated orderSellingTracking: {errors}")
-                print(f"❗ Failed payload: {payload}")
+        # Build parameterized MERGE query for safe upsert
+        merge_query = f"""
+        MERGE `{BIGQUERY_ORDER_SELLING_TRACKING_TABLE}` T
+        USING (
+          SELECT 
+            @ordersSellingTrackingId as ordersSellingTrackingId,
+            @batchNumber as batchNumber,
+            @companyId as companyId,
+            SAFE_CAST(@createdAt AS TIMESTAMP) as createdAt,
+            @createdBy as createdBy,
+            @orderId as orderId,
+            @orderDetailsId as orderDetailsId,
+            @status as status,
+            @storeId as storeId,
+            @uid as uid,
+            SAFE_CAST(@updatedAt AS TIMESTAMP) as updatedAt,
+            @updatedBy as updatedBy,
+            @itemIndex as itemIndex,
+            @productId as productId,
+            @productName as productName,
+            SAFE_CAST(@price AS NUMERIC) as price,
+            @quantity as quantity,
+            SAFE_CAST(@discount AS NUMERIC) as discount,
+            @discountType as discountType,
+            SAFE_CAST(@vat AS NUMERIC) as vat,
+            SAFE_CAST(@total AS NUMERIC) as total,
+            @isVatExempt as isVatExempt
+        ) S
+        ON T.ordersSellingTrackingId = S.ordersSellingTrackingId
+        WHEN MATCHED THEN
+          UPDATE SET 
+            batchNumber = S.batchNumber,
+            companyId = S.companyId,
+            createdAt = S.createdAt,
+            createdBy = S.createdBy,
+            orderId = S.orderId,
+            orderDetailsId = S.orderDetailsId,
+            status = S.status,
+            storeId = S.storeId,
+            uid = S.uid,
+            updatedAt = S.updatedAt,
+            updatedBy = S.updatedBy,
+            itemIndex = S.itemIndex,
+            productId = S.productId,
+            productName = S.productName,
+            price = S.price,
+            quantity = S.quantity,
+            discount = S.discount,
+            discountType = S.discountType,
+            vat = S.vat,
+            total = S.total,
+            isVatExempt = S.isVatExempt
+        WHEN NOT MATCHED THEN
+          INSERT (ordersSellingTrackingId, batchNumber, companyId, createdAt, createdBy, orderId, orderDetailsId, status, storeId, uid, updatedAt, updatedBy, itemIndex, productId, productName, price, quantity, discount, discountType, vat, total, isVatExempt)
+          VALUES (S.ordersSellingTrackingId, S.batchNumber, S.companyId, S.createdAt, S.createdBy, S.orderId, S.orderDetailsId, S.status, S.storeId, S.uid, S.updatedAt, S.updatedBy, S.itemIndex, S.productId, S.productName, S.price, S.quantity, S.discount, S.discountType, S.vat, S.total, S.isVatExempt)
+        """
+        
+        # Convert payload to query parameters for MERGE
+        query_params = []
+        for key, value in payload.items():
+            if key in ['createdAt', 'updatedAt'] and value:
+                query_params.append(bigquery.ScalarQueryParameter(key, "STRING", value))
+            elif key in ['price', 'discount', 'vat', 'total'] and value is not None:
+                query_params.append(bigquery.ScalarQueryParameter(key, "STRING", str(value)))
+            elif key in ['batchNumber', 'itemIndex', 'quantity'] and value is not None:
+                query_params.append(bigquery.ScalarQueryParameter(key, "INT64", int(value)))
+            elif key == 'isVatExempt':
+                query_params.append(bigquery.ScalarQueryParameter(key, "BOOL", bool(value)))
             else:
-                print(f"✅ Re-inserted updated orderSellingTracking {ost_id}")
-        except Exception as ie:
-            print(f"❌ Exception while inserting updated orderSellingTracking to BigQuery: {ie}")
+                query_params.append(bigquery.ScalarQueryParameter(key, "STRING", str(value) if value is not None else None))
+        
+        try:
+            job_config = bigquery.QueryJobConfig(query_parameters=query_params)
+            print(f"📤 Executing MERGE for orderSellingTracking {ost_id}")
+            merge_job = client.query(merge_query, job_config=job_config)
+            merge_job.result()
+            print(f"✅ Successfully merged/updated orderSellingTracking {ost_id}")
+        except Exception as me:
+            print(f"❌ Exception during MERGE operation for orderSellingTracking: {me}")
+            print(f"❗ Failed payload: {payload}")
 
     except Exception as e:
         print(f"❌ Unexpected error syncing updated orderSellingTracking to BigQuery: {e}")
 
 
 # OrderSellingTracking delete handler
-@firestore_fn.on_document_deleted(document="orderSellingTracking/{orderSellingTrackingId}", region="asia-east1")
+@firestore_fn.on_document_deleted(document="ordersSellingTracking/{orderSellingTrackingId}", region="asia-east1")
 def sync_order_selling_tracking_delete(event: firestore_fn.Event[firestore_fn.DocumentSnapshot]) -> None:
     print("🗑️ Firestore trigger activated for deleted orderSellingTracking - BigQuery sync")
     try:
