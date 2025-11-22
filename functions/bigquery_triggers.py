@@ -916,6 +916,10 @@ def sync_order_selling_tracking_to_bigquery(event: firestore_fn.Event[firestore_
             "total": to_numeric(data.get("total")),
             "isVatExempt": bool(data.get("isVatExempt", False)),
         }
+        
+        # Debug status field specifically
+        print(f"🔍 Status field debugging - Raw Firestore value: '{data.get('status')}' (type: {type(data.get('status'))})")
+        print(f"🔍 All Firestore data keys: {list(data.keys())}")
 
         # Clean None values and convert Decimal to JSON-friendly types
         def clean_payload(obj):
@@ -968,7 +972,6 @@ def sync_order_selling_tracking_update(event: firestore_fn.Event[firestore_fn.Do
         # This ensures atomicity and handles both insert and update cases safely
 
         # Recreate payload from the updated document with new schema
-        # Recreate payload from the updated document with new schema
         def to_int(v):
             try:
                 return int(v) if v is not None else None
@@ -984,6 +987,10 @@ def sync_order_selling_tracking_update(event: firestore_fn.Event[firestore_fn.Do
                 return Decimal(str(v))
             except (InvalidOperation, ValueError, TypeError):
                 return None
+                
+        # Debug status field specifically
+        print(f"🔍 UPDATE Status field debugging - Raw Firestore value: '{after.get('status')}' (type: {type(after.get('status'))})")
+        print(f"🔍 UPDATE All Firestore data keys: {list(after.keys())}")
 
         payload = {
             "ordersSellingTrackingId": ost_id,
@@ -1090,6 +1097,11 @@ def sync_order_selling_tracking_update(event: firestore_fn.Event[firestore_fn.Do
                 query_params.append(bigquery.ScalarQueryParameter(key, "INT64", int(value)))
             elif key == 'isVatExempt':
                 query_params.append(bigquery.ScalarQueryParameter(key, "BOOL", bool(value)))
+            elif key == 'status':
+                # Ensure status is properly converted to string
+                status_value = str(value) if value is not None else None
+                print(f"🔍 MERGE Status parameter: '{status_value}' (original: '{value}')")
+                query_params.append(bigquery.ScalarQueryParameter(key, "STRING", status_value))
             else:
                 query_params.append(bigquery.ScalarQueryParameter(key, "STRING", str(value) if value is not None else None))
         
