@@ -70,26 +70,36 @@ The functions automatically detect which environment they're running in:
 
 ## BigQuery Setup
 
-### Required Datasets
-Ensure these datasets exist in each project:
+### ✅ Confirmed Datasets
+Both environments are configured and working:
 
 **Dev Project (jasperpos-dev)**:
-```sql
-CREATE SCHEMA IF NOT EXISTS `jasperpos-dev.tovrika_pos_dev`
-OPTIONS (location = 'asia-east1');
-```
+- Dataset: `jasperpos-dev.tovrika_pos_dev` ✅
+- Location: `asia-east1`
+- Tables: orders, orderDetails, products, ordersSellingTracking
 
 **Prod Project (jasperpos-1dfd5)**:
-```sql
--- Already exists: jasperpos-1dfd5.tovrika_pos
-```
+- Dataset: `jasperpos-1dfd5.tovrika_pos` ✅
+- Location: `asia-east1`
+- Tables: orders, orderDetails, products, ordersSellingTracking
 
-### Required Tables
-Run the table creation scripts for dev environment:
-```bash
-# Update create scripts to point to dev dataset
-python functions/create_orderssellingtracking_table.py
-```
+### Automatic Table References
+The config automatically switches table references based on environment:
+
+**Dev Environment:**
+- `jasperpos-dev.tovrika_pos_dev.orders`
+- `jasperpos-dev.tovrika_pos_dev.orderDetails`
+- `jasperpos-dev.tovrika_pos_dev.products`
+- `jasperpos-dev.tovrika_pos_dev.ordersSellingTracking`
+
+**Prod Environment:**
+- `jasperpos-1dfd5.tovrika_pos.orders`
+- `jasperpos-1dfd5.tovrika_pos.orderDetails`
+- `jasperpos-1dfd5.tovrika_pos.products`
+- `jasperpos-1dfd5.tovrika_pos.ordersSellingTracking`
+
+### Schema Consistency
+Both dev and prod datasets use **identical schemas** - all table structures, field types, and constraints are the same to ensure consistent behavior across environments.
 
 ## Testing Your Deployment
 
