@@ -1,12 +1,26 @@
 # Configuration constants for the Firebase Functions project
+import os
 
-# BigQuery Configuration
-BIGQUERY_PROJECT_ID = "jasperpos-1dfd5"
-BIGQUERY_DATASET_ID = "tovrika_pos"
+# Determine environment (dev or prod) based on project ID
+# This is automatically set by Firebase Functions runtime
+ENVIRONMENT = os.environ.get('GCP_PROJECT', 'jasperpos-1dfd5')
+IS_DEV = ENVIRONMENT == 'jasperpos-dev'
+
+# BigQuery Configuration - switches based on environment
+if IS_DEV:
+    BIGQUERY_PROJECT_ID = "jasperpos-dev"
+    BIGQUERY_DATASET_ID = "tovrika_pos_dev"
+else:
+    BIGQUERY_PROJECT_ID = "jasperpos-1dfd5"
+    BIGQUERY_DATASET_ID = "tovrika_pos"
+
 BIGQUERY_LOCATION = "asia-east1"  # Same region as your Firebase Functions
 
 # Firebase Configuration
 FIREBASE_REGION = "asia-east1"
+
+# Log current environment for debugging
+print(f"🌍 Environment: {'DEV' if IS_DEV else 'PROD'} (Project: {BIGQUERY_PROJECT_ID})")
 
 # BigQuery Table Names
 BIGQUERY_ORDERS_TABLE = f"{BIGQUERY_PROJECT_ID}.{BIGQUERY_DATASET_ID}.orders"

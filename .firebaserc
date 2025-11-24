@@ -1,5 +1,7 @@
 {
   "projects": {
-    "default": "jasperpos-1dfd5"
+    "default": "jasperpos-1dfd5",
+    "prod": "jasperpos-1dfd5",
+    "dev": "jasperpos-dev"
   }
 }
