@@ -14,4 +14,24 @@
 .gitignore
 
 node_modules
-#!include:.gitignore
+
+# Exclude test and check scripts from deployment
+check_*.py
+test_*.py
+cleanup_*.py
+insert_test_*.py
+run_backfill_*.py
+run_test_*.py
+print_user_doc.py
+update_user_permissions.py
+create_orderDetails_partitioned_table.py
+bigquery_api_endpoints_backup.py
+
+# Exclude venv and cache
+venv/
+__pycache__/
+*.pyc
+
+# IMPORTANT: Include service account files (override .gitignore)
+!service-account.json
+!service-account-dev.json

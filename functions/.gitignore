@@ -1,1 +1,3 @@
 *.local
+service-account*.json
+!service-account-example.json

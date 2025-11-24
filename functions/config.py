@@ -10,9 +10,11 @@ IS_DEV = ENVIRONMENT == 'jasperpos-dev'
 if IS_DEV:
     BIGQUERY_PROJECT_ID = "jasperpos-dev"
     BIGQUERY_DATASET_ID = "tovrika_pos_dev"
+    SERVICE_ACCOUNT_FILE = "service-account-dev.json"
 else:
     BIGQUERY_PROJECT_ID = "jasperpos-1dfd5"
     BIGQUERY_DATASET_ID = "tovrika_pos"
+    SERVICE_ACCOUNT_FILE = "service-account.json"
 
 BIGQUERY_LOCATION = "asia-east1"  # Same region as your Firebase Functions
 
@@ -20,7 +22,7 @@ BIGQUERY_LOCATION = "asia-east1"  # Same region as your Firebase Functions
 FIREBASE_REGION = "asia-east1"
 
 # Log current environment for debugging
-print(f"🌍 Environment: {'DEV' if IS_DEV else 'PROD'} (Project: {BIGQUERY_PROJECT_ID})")
+print(f"Environment: {'DEV' if IS_DEV else 'PROD'} (Project: {BIGQUERY_PROJECT_ID}, SA: {SERVICE_ACCOUNT_FILE})")
 
 # BigQuery Table Names
 BIGQUERY_ORDERS_TABLE = f"{BIGQUERY_PROJECT_ID}.{BIGQUERY_DATASET_ID}.orders"
