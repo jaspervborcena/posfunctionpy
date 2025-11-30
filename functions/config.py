@@ -1,48 +1,75 @@
 # Configuration constants for the Firebase Functions project
 import os
 
-# Determine environment (dev or prod) based on project ID
-# This is automatically set by Firebase Functions runtime
-ENVIRONMENT = os.environ.get('GCP_PROJECT', 'jasperpos-1dfd5')
-IS_DEV = ENVIRONMENT == 'jasperpos-dev'
+def _get_environment():
+    """Determine environment (dev or prod) based on project ID"""
+    # K_SERVICE is set by Cloud Run/Functions, GCP_PROJECT is the project ID
+    project_id = os.environ.get('GCP_PROJECT') or os.environ.get('GOOGLE_CLOUD_PROJECT', 'jasperpos-1dfd5')
+    return project_id
 
-# BigQuery Configuration - switches based on environment
-if IS_DEV:
-    BIGQUERY_PROJECT_ID = "jasperpos-dev"
-    BIGQUERY_DATASET_ID = "tovrika_pos_dev"
-    SERVICE_ACCOUNT_FILE = "service-account-dev.json"
-else:
-    BIGQUERY_PROJECT_ID = "jasperpos-1dfd5"
-    BIGQUERY_DATASET_ID = "tovrika_pos"
-    SERVICE_ACCOUNT_FILE = "service-account.json"
+def _is_dev():
+    """Check if running in dev environment"""
+    return _get_environment() == 'jasperpos-dev'
+
+# Lazy-loaded configuration - call these functions instead of accessing constants directly
+def get_bigquery_project_id():
+    """Get BigQuery project ID based on environment"""
+    return "jasperpos-dev" if _is_dev() else "jasperpos-1dfd5"
+
+def get_bigquery_dataset_id():
+    """Get BigQuery dataset ID based on environment"""
+    return "tovrika_pos_dev" if _is_dev() else "tovrika_pos"
+
+def get_service_account_file():
+    """Get service account file path based on environment"""
+    return "service-account-dev.json" if _is_dev() else "service-account.json"
+
+# For backward compatibility - these will evaluate at runtime
+BIGQUERY_PROJECT_ID = get_bigquery_project_id()
+BIGQUERY_DATASET_ID = get_bigquery_dataset_id()
+SERVICE_ACCOUNT_FILE = get_service_account_file()
 
 BIGQUERY_LOCATION = "asia-east1"  # Same region as your Firebase Functions
 
 # Firebase Configuration
 FIREBASE_REGION = "asia-east1"
 
-# Log current environment for debugging
-print(f"Environment: {'DEV' if IS_DEV else 'PROD'} (Project: {BIGQUERY_PROJECT_ID}, SA: {SERVICE_ACCOUNT_FILE})")
+# Log current environment for debugging (only log on first access)
+_logged = False
+def _log_environment():
+    global _logged
+    if not _logged:
+        env = 'DEV' if _is_dev() else 'PROD'
+        print(f"Environment: {env} (Project: {get_bigquery_project_id()}, Dataset: {get_bigquery_dataset_id()})")
+        _logged = True
 
-# BigQuery Table Names
-BIGQUERY_ORDERS_TABLE = f"{BIGQUERY_PROJECT_ID}.{BIGQUERY_DATASET_ID}.orders"
-BIGQUERY_ORDER_DETAILS_TABLE = f"{BIGQUERY_PROJECT_ID}.{BIGQUERY_DATASET_ID}.orderDetails"
-# BigQuery products table (matches Firestore `products` collection)
-BIGQUERY_PRODUCTS_TABLE = f"{BIGQUERY_PROJECT_ID}.{BIGQUERY_DATASET_ID}.products"
-# BigQuery orders selling tracking table (matches Firestore `ordersSellingTracking` collection)
-BIGQUERY_ORDER_SELLING_TRACKING_TABLE = f"{BIGQUERY_PROJECT_ID}.{BIGQUERY_DATASET_ID}.ordersSellingTracking"
+# BigQuery Table Names - dynamically constructed
+def _get_table_name(table):
+    """Get fully qualified BigQuery table name"""
+    _log_environment()
+    return f"{get_bigquery_project_id()}.{get_bigquery_dataset_id()}.{table}"
+
+BIGQUERY_ORDERS_TABLE = _get_table_name("orders")
+BIGQUERY_ORDER_DETAILS_TABLE = _get_table_name("orderDetails")
+BIGQUERY_PRODUCTS_TABLE = _get_table_name("products")
+BIGQUERY_ORDER_SELLING_TRACKING_TABLE = _get_table_name("ordersSellingTracking")
 
 # Collection Names (Firestore)
 ORDERS_COLLECTION = "orders"
 ORDER_DETAILS_COLLECTION = "orderDetails"
 
 # Standardized names / aliases to help find resources quickly
-BQ_TABLES = {
-    "orders": BIGQUERY_ORDERS_TABLE,
-    "orderDetails": BIGQUERY_ORDER_DETAILS_TABLE,
-    "products": BIGQUERY_PRODUCTS_TABLE,
-    "ordersSellingTracking": BIGQUERY_ORDER_SELLING_TRACKING_TABLE
-}
+def get_bq_tables():
+    """Get BigQuery table names for current environment"""
+    return {
+        "orders": _get_table_name("orders"),
+        "orderDetails": _get_table_name("orderDetails"),
+        "products": _get_table_name("products"),
+        "ordersSellingTracking": _get_table_name("ordersSellingTracking")
+    }
+
+# For backward compatibility
+BQ_TABLES = get_bq_tables()
 
 # Firestore collection name constants (already present but normalized)
 COLLECTIONS = {
@@ -96,7 +123,8 @@ def get_bigquery_client():
     """Get BigQuery client instance"""
     try:
         from google.cloud import bigquery
-        return bigquery.Client(project=BIGQUERY_PROJECT_ID, location=BIGQUERY_LOCATION)
+        _log_environment()
+        return bigquery.Client(project=get_bigquery_project_id(), location=BIGQUERY_LOCATION)
     except ImportError:
         print("WARNING: BigQuery library not available")
         return None

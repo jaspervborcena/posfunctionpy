@@ -90,6 +90,9 @@ def sync_order_to_bigquery(event: firestore_fn.Event[firestore_fn.DocumentSnapsh
     print("🔥 Firestore trigger activated for new order - BigQuery sync")
 
     order_id = event.params["orderId"]
+    # Defensive normalization and logging
+    print(f"ℹ️ Using BigQuery table for orders: {BIGQUERY_ORDERS_TABLE}")
+    order_id = str(order_id)
     data = event.data.to_dict()
 
     print(f"📄 Document ID: {order_id}")
@@ -283,6 +286,9 @@ def sync_order_to_bigquery_update(event: firestore_fn.Event[firestore_fn.Documen
     print("🔁 Firestore trigger activated for updated order - BigQuery sync")
     try:
         order_id = event.params.get("orderId")
+        # Defensive normalization and logging
+        print(f"ℹ️ Using BigQuery table for orders: {BIGQUERY_ORDERS_TABLE}")
+        order_id = str(order_id) if order_id is not None else order_id
         after = event.data.after.to_dict()
 
         print(f"📄 Order ID (updated): {order_id}")

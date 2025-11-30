@@ -3,7 +3,7 @@ import json
 from datetime import datetime
 
 # Import configuration 
-from config import get_bigquery_client, DEFAULT_HEADERS
+from config import get_bigquery_client, DEFAULT_HEADERS, get_bigquery_project_id, get_bigquery_dataset_id
 
 # Import authentication middleware
 from auth_middleware import require_auth, require_store_access, get_user_info
@@ -15,8 +15,10 @@ except ImportError:
     BIGQUERY_AVAILABLE = False
     print("WARNING: BigQuery library not available. BigQuery functions will be disabled.")
 
-# BigQuery table name for product inventory
-BIGQUERY_PRODUCT_INVENTORY_TABLE = "jasperpos-1dfd5.tovrika_pos.productInventory"
+# BigQuery table name for product inventory - dynamically constructed based on environment
+def _get_product_inventory_table():
+    """Get fully qualified BigQuery table name for product inventory"""
+    return f"{get_bigquery_project_id()}.{get_bigquery_dataset_id()}.productInventory"
 
 # The HTTP endpoint `insert_product_inventory_bq` was removed.
 # In this project, inserting product inventory to BigQuery is handled
@@ -55,6 +57,7 @@ def get_product_inventory_bq(req: https_fn.Request) -> https_fn.Response:
     
     try:
         client = get_bigquery_client()
+        table_name = _get_product_inventory_table()
         
         # Build query
         query = f"""
@@ -74,7 +77,7 @@ def get_product_inventory_bq(req: https_fn.Request) -> https_fn.Response:
             unitType,
             updatedAt,
             updatedBy
-        FROM `{BIGQUERY_PRODUCT_INVENTORY_TABLE}`
+        FROM `{table_name}`
         WHERE storeId = @store_id
         """
         
