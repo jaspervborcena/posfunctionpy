@@ -74,7 +74,6 @@ def ts_to_iso(val):
         return None
 
 # Import configuration 
-from config import get_bigquery_client, BIGQUERY_ORDERS_TABLE, BIGQUERY_ORDER_DETAILS_TABLE, BIGQUERY_PRODUCTS_TABLE, BIGQUERY_ORDER_SELLING_TRACKING_TABLE
 from bq_helpers import build_product_payload
 
 try:
@@ -84,6 +83,8 @@ except ImportError:
     BIGQUERY_AVAILABLE = False
     print("WARNING: BigQuery library not available. BigQuery triggers will be disabled.")
 
+from config import get_bigquery_client, get_bigquery_table_name
+
 # BigQuery trigger for new order documents
 @firestore_fn.on_document_created(document="orders/{orderId}", region="asia-east1")
 def sync_order_to_bigquery(event: firestore_fn.Event[firestore_fn.DocumentSnapshot]) -> None:
@@ -91,7 +92,8 @@ def sync_order_to_bigquery(event: firestore_fn.Event[firestore_fn.DocumentSnapsh
 
     order_id = event.params["orderId"]
     # Defensive normalization and logging
-    print(f"ℹ️ Using BigQuery table for orders: {BIGQUERY_ORDERS_TABLE}")
+    table_name = get_bigquery_table_name('orders')
+    print(f"ℹ️ Using BigQuery table for orders: {table_name}")
     order_id = str(order_id)
     data = event.data.to_dict()
 
@@ -107,7 +109,7 @@ def sync_order_to_bigquery(event: firestore_fn.Event[firestore_fn.DocumentSnapsh
         client = get_bigquery_client()
         
         # Check if orderId already exists in BigQuery
-        check_query = f"SELECT COUNT(*) as count FROM `{BIGQUERY_ORDERS_TABLE}` WHERE orderId = @orderId"
+        check_query = f"SELECT COUNT(*) as count FROM `{table_name}` WHERE orderId = @orderId"
         check_params = [bigquery.ScalarQueryParameter("orderId", "STRING", order_id)]
         check_job_config = bigquery.QueryJobConfig(query_parameters=check_params)
         check_job = client.query(check_query, job_config=check_job_config)
@@ -183,7 +185,7 @@ def sync_order_to_bigquery(event: firestore_fn.Event[firestore_fn.DocumentSnapsh
         # Use MERGE to perform an idempotent upsert based on orderId
         try:
             merge_query = f"""
-            MERGE `{BIGQUERY_ORDERS_TABLE}` T
+            MERGE `{table_name}` T
             USING (SELECT @orderId AS orderId) S
             ON T.orderId = S.orderId
             WHEN MATCHED THEN
@@ -306,7 +308,8 @@ def sync_order_to_bigquery_update(event: firestore_fn.Event[firestore_fn.Documen
         client = get_bigquery_client()
         
         # Verify the order exists in BigQuery before updating
-        check_query = f"SELECT COUNT(*) as count FROM `{BIGQUERY_ORDERS_TABLE}` WHERE orderId = @orderId"
+        table_name = get_bigquery_table_name('orders')
+        check_query = f"SELECT COUNT(*) as count FROM `{table_name}` WHERE orderId = @orderId"
         check_params = [bigquery.ScalarQueryParameter("orderId", "STRING", order_id)]
         check_job_config = bigquery.QueryJobConfig(query_parameters=check_params)
         check_job = client.query(check_query, job_config=check_job_config)
@@ -320,7 +323,7 @@ def sync_order_to_bigquery_update(event: firestore_fn.Event[firestore_fn.Documen
         # Use MERGE to upsert the updated order (idempotent)
         try:
             merge_query = f"""
-            MERGE `{BIGQUERY_ORDERS_TABLE}` T
+            MERGE `{table_name}` T
             USING (SELECT @orderId AS orderId) S
             ON T.orderId = S.orderId
             WHEN MATCHED THEN
@@ -424,7 +427,8 @@ def sync_order_to_bigquery_delete(event: firestore_fn.Event[firestore_fn.Documen
     try:
         order_id = event.params.get("orderId")
         client = get_bigquery_client()
-        delete_query = f"DELETE FROM `{BIGQUERY_ORDERS_TABLE}` WHERE orderId = @orderId"
+        table_name = get_bigquery_table_name('orders')
+        delete_query = f"DELETE FROM `{table_name}` WHERE orderId = @orderId"
         params = [bigquery.ScalarQueryParameter("orderId", "STRING", order_id)]
         job_config = bigquery.QueryJobConfig(query_parameters=params)
         job = client.query(delete_query, job_config=job_config)
@@ -454,8 +458,9 @@ def sync_order_details_to_bigquery(event: firestore_fn.Event[firestore_fn.Docume
     try:
         client = get_bigquery_client()
 
+        table_name = get_bigquery_table_name('orderDetails')
         # Check if orderDetailsId already exists in BigQuery
-        check_query = f"SELECT COUNT(*) as count FROM `{BIGQUERY_ORDER_DETAILS_TABLE}` WHERE orderDetailsId = @orderDetailsId"
+        check_query = f"SELECT COUNT(*) as count FROM `{table_name}` WHERE orderDetailsId = @orderDetailsId"
         check_params = [bigquery.ScalarQueryParameter("orderDetailsId", "STRING", order_detail_id)]
         check_job_config = bigquery.QueryJobConfig(query_parameters=check_params)
         check_job = client.query(check_query, job_config=check_job_config)
@@ -473,8 +478,8 @@ def sync_order_details_to_bigquery(event: firestore_fn.Event[firestore_fn.Docume
 
         # Use streaming insert for orderDetails (keeps nested items intact)
         try:
-            table = client.get_table(BIGQUERY_ORDER_DETAILS_TABLE)
-            print(f"📤 Inserting payload into {BIGQUERY_ORDER_DETAILS_TABLE}")
+            table = client.get_table(table_name)
+            print(f"📤 Inserting payload into {table_name}")
             errors = client.insert_rows_json(table, [payload])
             if errors:
                 print(f"❌ BigQuery insert failed with errors: {errors}")
@@ -509,8 +514,9 @@ def sync_order_details_update(event: firestore_fn.Event[firestore_fn.DocumentSna
 
         client = get_bigquery_client()
         
+        table_name = get_bigquery_table_name('orderDetails')
         # Verify the orderDetails exists before updating
-        check_query = f"SELECT COUNT(*) as count FROM `{BIGQUERY_ORDER_DETAILS_TABLE}` WHERE orderDetailsId = @orderDetailsId"
+        check_query = f"SELECT COUNT(*) as count FROM `{table_name}` WHERE orderDetailsId = @orderDetailsId"
         check_params = [bigquery.ScalarQueryParameter("orderDetailsId", "STRING", order_detail_id)]
         check_job_config = bigquery.QueryJobConfig(query_parameters=check_params)
         check_job = client.query(check_query, job_config=check_job_config)
@@ -523,7 +529,7 @@ def sync_order_details_update(event: firestore_fn.Event[firestore_fn.DocumentSna
 
         # Delete existing row if present
         try:
-            delete_query = f"DELETE FROM `{BIGQUERY_ORDER_DETAILS_TABLE}` WHERE orderDetailsId = @orderDetailsId"
+            delete_query = f"DELETE FROM `{table_name}` WHERE orderDetailsId = @orderDetailsId"
             params = [bigquery.ScalarQueryParameter("orderDetailsId", "STRING", order_detail_id)]
             job_config = bigquery.QueryJobConfig(query_parameters=params)
             delete_job = client.query(delete_query, job_config=job_config)
@@ -538,8 +544,8 @@ def sync_order_details_update(event: firestore_fn.Event[firestore_fn.DocumentSna
 
         # Insert new payload with richer logging (streaming insert)
         try:
-            table = client.get_table(BIGQUERY_ORDER_DETAILS_TABLE)
-            print(f"📤 Inserting (update) payload into {BIGQUERY_ORDER_DETAILS_TABLE}: {json.dumps(payload)}")
+            table = client.get_table(table_name)
+            print(f"📤 Inserting (update) payload into {table_name}: {json.dumps(payload)}")
             errors = client.insert_rows_json(table, [payload])
             if errors:
                 print(f"❌ Failed to insert updated orderDetails: {errors}")
@@ -564,7 +570,8 @@ def sync_order_details_delete(event: firestore_fn.Event[firestore_fn.DocumentSna
     try:
         order_detail_id = event.params.get("orderDetailsId")
         client = get_bigquery_client()
-        delete_query = f"DELETE FROM `{BIGQUERY_ORDER_DETAILS_TABLE}` WHERE orderDetailsId = @orderDetailsId"
+        table_name = get_bigquery_table_name('orderDetails')
+        delete_query = f"DELETE FROM `{table_name}` WHERE orderDetailsId = @orderDetailsId"
         params = [bigquery.ScalarQueryParameter("orderDetailsId", "STRING", order_detail_id)]
         job_config = bigquery.QueryJobConfig(query_parameters=params)
         job = client.query(delete_query, job_config=job_config)
@@ -595,8 +602,9 @@ def sync_products_to_bigquery(event: firestore_fn.Event[firestore_fn.DocumentSna
     try:
         client = get_bigquery_client()
         
+        table_name = get_bigquery_table_name('products')
         # Check if productId already exists in BigQuery
-        check_query = f"SELECT COUNT(*) as count FROM `{BIGQUERY_PRODUCTS_TABLE}` WHERE productId = @productId"
+        check_query = f"SELECT COUNT(*) as count FROM `{table_name}` WHERE productId = @productId"
         check_params = [bigquery.ScalarQueryParameter("productId", "STRING", product_id)]
         check_job_config = bigquery.QueryJobConfig(query_parameters=check_params)
         check_job = client.query(check_query, job_config=check_job_config)
@@ -653,7 +661,7 @@ def sync_products_to_bigquery(event: firestore_fn.Event[firestore_fn.DocumentSna
         # Use MERGE to perform an idempotent upsert based on productId
         try:
             merge_query = f"""
-            MERGE `{BIGQUERY_PRODUCTS_TABLE}` T
+            MERGE `{table_name}` T
             USING (SELECT @productId AS productId) S
             ON T.productId = S.productId
             WHEN MATCHED THEN

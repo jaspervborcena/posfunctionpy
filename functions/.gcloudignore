@@ -32,6 +32,7 @@ venv/
 __pycache__/
 *.pyc
 
-# IMPORTANT: Include service account files (override .gitignore)
-!service-account.json
+# IMPORTANT: Do NOT include the production service account in dev deployments
+# Keep the dev service account available for local testing/deploys
+service-account.json
 !service-account-dev.json

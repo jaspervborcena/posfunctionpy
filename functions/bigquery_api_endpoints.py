@@ -3,7 +3,7 @@ import json
 from datetime import datetime, timedelta
 
 # Import configuration 
-from config import get_bigquery_client, BIGQUERY_ORDERS_TABLE, BIGQUERY_ORDER_DETAILS_TABLE, BIGQUERY_PRODUCTS_TABLE, BIGQUERY_ORDER_SELLING_TRACKING_TABLE, DEFAULT_HEADERS, BACKFILL_PRESETS
+from config import get_bigquery_client, get_bigquery_table_name, DEFAULT_HEADERS, BACKFILL_PRESETS
 from config import BQ_TABLES, COLLECTIONS
 
 # Import authentication middleware
@@ -84,9 +84,9 @@ def get_products_bq(req: https_fn.Request) -> https_fn.Response:
         client = get_bigquery_client()
 
         # Use the exact query specified by user
-        query = f"""
+        query = """
         SELECT *
-        FROM `{BIGQUERY_PRODUCTS_TABLE}`
+        FROM `{%s}`
         WHERE storeId = @store_id
         ORDER BY updatedAt DESC
         LIMIT @page_size
@@ -104,6 +104,8 @@ def get_products_bq(req: https_fn.Request) -> https_fn.Response:
         print(f"🔍 BigQuery products query: {query}")
         print(f"📋 Parameters: store_id={store_id}, page_size={page_size}, page_number={page_number}")
 
+        # Fill in the table name at runtime to avoid import-time environment discovery
+        query = query % (get_bigquery_table_name('products'),)
         query_job = client.query(query, job_config=job_config)
         results = query_job.result()
 
@@ -181,9 +183,9 @@ def get_orders_bq(req: https_fn.Request) -> https_fn.Response:
         client = get_bigquery_client()
 
         # Use the exact query specified by user
-        query = f"""
+        query = """
         SELECT *
-        FROM `{BIGQUERY_ORDERS_TABLE}`
+        FROM `{%s}`
         WHERE storeId = @store_id
         ORDER BY updatedAt DESC
         LIMIT @page_size
@@ -201,6 +203,8 @@ def get_orders_bq(req: https_fn.Request) -> https_fn.Response:
         print(f"🔍 BigQuery orders query: {query}")
         print(f"📋 Parameters: store_id={store_id}, page_size={page_size}, page_number={page_number}")
 
+        # Fill in the table name at runtime
+        query = query % (get_bigquery_table_name('orders'),)
         query_job = client.query(query, job_config=job_config)
         results = query_job.result()
 
@@ -300,10 +304,10 @@ def get_sales_summary_bq(req: https_fn.Request) -> https_fn.Response:
         ]
         
         # Build aggregated sales summary query
-        query = f"""
+        query = """
         SELECT 
             COUNT(*) as total_orders
-        FROM `{BIGQUERY_ORDERS_TABLE}`
+        FROM `{%s}`
         WHERE DATE(createdAt) = @target_date
         """
         
@@ -321,6 +325,8 @@ def get_sales_summary_bq(req: https_fn.Request) -> https_fn.Response:
         print(f"📋 Parameters: target_date={target_date.date()}, store_id={store_id}")
         
         # Execute query
+        # Fill in the table name at runtime
+        query = query % (get_bigquery_table_name('orders'),)
         query_job = client.query(query, job_config=job_config)
         results = query_job.result()
         
@@ -393,14 +399,14 @@ def sales_summary_by_product(req: https_fn.Request) -> https_fn.Response:
     try:
         client = get_bigquery_client()
 
-        query = f"""
+        query = """
         SELECT
           o.storeId as storeId,
           o.invoiceNumber as invoiceNumber,
           ost.productId as productId,
           SUM(ost.total) AS totalAmount
-        FROM `{BIGQUERY_ORDER_SELLING_TRACKING_TABLE}` AS ost
-        JOIN `{BIGQUERY_ORDERS_TABLE}` AS o
+        FROM `{%s}` AS ost
+        JOIN `{%s}` AS o
         ON ost.orderId = o.orderId
         WHERE FORMAT_TIMESTAMP('%Y%m', ost.updatedAt) = @month
           AND ost.status = 'completed'
@@ -421,6 +427,8 @@ def sales_summary_by_product(req: https_fn.Request) -> https_fn.Response:
         print(f"🔍 BigQuery sales_summary_by_product query: {query}")
         print(f"📋 Parameters: month={month}, store_id={store_id}")
 
+        # Fill in table names at runtime
+        query = query % (get_bigquery_table_name('ordersSellingTracking'), get_bigquery_table_name('orders'))
         query_job = client.query(query, job_config=job_config)
         results = query_job.result()
 
@@ -535,12 +543,12 @@ def sales_summary_by_store(req: https_fn.Request) -> https_fn.Response:
         client = get_bigquery_client()
 
         # Base query - status is parameterized (default to 'completed' if not provided)
-        query = f"""
+        query = """
         SELECT
           o.storeId as storeId,
           SUM(ost.total) AS totalAmount
-        FROM `{BIGQUERY_ORDER_SELLING_TRACKING_TABLE}` AS ost
-        JOIN `{BIGQUERY_ORDERS_TABLE}` AS o
+        FROM `{%s}` AS ost
+        JOIN `{%s}` AS o
         ON ost.orderId = o.orderId
         WHERE ost.status = @status
         """
@@ -572,6 +580,8 @@ def sales_summary_by_store(req: https_fn.Request) -> https_fn.Response:
         print(f"🔍 BigQuery sales_summary_by_store query: {query}")
         print(f"📋 Parameters: month={month}, date={date_param}, status={status_value}")
 
+        # Fill in table names at runtime
+        query = query % (get_bigquery_table_name('ordersSellingTracking'), get_bigquery_table_name('orders'))
         query_job = client.query(query, job_config=job_config)
         results = query_job.result()
 
@@ -652,7 +662,7 @@ def manage_item_status(req: https_fn.Request) -> https_fn.Response:
     try:
         client = get_bigquery_client()
 
-        query = f"""
+        query = """
         SELECT
           ost.productName as productName,
           p.skuId AS SKU,
@@ -665,8 +675,8 @@ def manage_item_status(req: https_fn.Request) -> https_fn.Response:
           ost.total as total,
           ost.updatedAt as updatedAt,
           ost.status as status
-        FROM `{BIGQUERY_ORDER_SELLING_TRACKING_TABLE}` AS ost
-        JOIN `{BIGQUERY_PRODUCTS_TABLE}` AS p
+        FROM `{%s}` AS ost
+        JOIN `{%s}` AS p
         ON ost.productId = p.productId
         WHERE ost.storeId = @store_id
           AND ost.orderId = @order_id
@@ -683,6 +693,8 @@ def manage_item_status(req: https_fn.Request) -> https_fn.Response:
         print(f"🔍 BigQuery manage_item_status query: {query}")
         print(f"📋 Parameters: store_id={store_id}, order_id={order_id}")
 
+        # Fill in table names at runtime
+        query = query % (get_bigquery_table_name('ordersSellingTracking'), get_bigquery_table_name('products'))
         query_job = client.query(query, job_config=job_config)
         results = query_job.result()
 
@@ -800,11 +812,11 @@ def get_orders_count_by_date_bq(req: https_fn.Request) -> https_fn.Response:
         ]
         
         # Build aggregation query - count orders by date based on updatedAt
-        query = f"""
+        query = """
         SELECT 
             FORMAT_DATE('%Y%m%d', DATE(updatedAt)) as Date,
             COUNT(*) as order_count
-        FROM `{BIGQUERY_ORDERS_TABLE}`
+        FROM `{%s}`
         WHERE DATE(updatedAt) BETWEEN @from_date AND @to_date
         """
         
@@ -828,6 +840,8 @@ def get_orders_count_by_date_bq(req: https_fn.Request) -> https_fn.Response:
         
         # Execute query with timeout and error handling
         print(f"⏳ Starting BigQuery aggregation job...")
+        # Fill in table name at runtime
+        query = query % (get_bigquery_table_name('orders'),)
         query_job = client.query(query, job_config=job_config)
         
         # Wait for job completion with timeout
@@ -990,11 +1004,11 @@ def get_orders_count_by_status_bq(req: https_fn.Request) -> https_fn.Response:
         ]
         
         # Build aggregation query - count orders by date based on updatedAt
-        query = f"""
+        query = """
         SELECT 
             FORMAT_DATE('%Y%m%d', DATE(updatedAt)) as Date,
             COUNT(*) as order_count
-        FROM `{BIGQUERY_ORDERS_TABLE}`
+        FROM `{%s}`
         WHERE DATE(updatedAt) BETWEEN @from_date AND @to_date
         """
         
@@ -1018,6 +1032,8 @@ def get_orders_count_by_status_bq(req: https_fn.Request) -> https_fn.Response:
         
         # Execute query with timeout and error handling
         print(f"⏳ Starting BigQuery aggregation job...")
+        # Fill in table name at runtime
+        query = query % (get_bigquery_table_name('orders'),)
         query_job = client.query(query, job_config=job_config)
         
         # Wait for job completion with timeout
