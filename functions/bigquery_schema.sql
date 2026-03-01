@@ -11,6 +11,7 @@ CREATE TABLE `jasperpos-1dfd5.tovrika_pos.orders` (
   atpOrOcn STRING,
   birPermitNo STRING,
   cashSale BOOL,
+  chargeSale BOOL,
   companyAddress STRING,
   companyEmail STRING,
   companyId STRING,
@@ -35,10 +36,18 @@ CREATE TABLE `jasperpos-1dfd5.tovrika_pos.orders` (
   payments STRUCT<
     amountTendered FLOAT64,
     changeAmount FLOAT64,
-    paymentDescription STRING
+    paymentDescription STRING,
+    paymentType STRING
   >,
   status STRING,
+  statusHistory ARRAY<STRUCT<
+    status STRING,
+    changedAt TIMESTAMP,
+    changedBy STRING
+  >>,
+  statusTags ARRAY<STRING>,
   storeId STRING,
+  tableNumber STRING,
   totalAmount FLOAT64,
   uid STRING,
   updatedAt TIMESTAMP,

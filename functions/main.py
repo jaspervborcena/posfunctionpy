@@ -29,7 +29,12 @@ from product_inventory_api import get_product_inventory_bq
 from products_api import update_product
 
 # Testing and utilities
-from test_auth import test_auth_basic, test_auth_store
+try:
+	from test_auth import test_auth_basic, test_auth_store
+except Exception as e:
+	test_auth_basic = None
+	test_auth_store = None
+	print(f"DEBUG: test_auth not available: {e}")
 
 # Optional test endpoint removed.
 # The simple `on_request_example` test HTTP function was removed to avoid

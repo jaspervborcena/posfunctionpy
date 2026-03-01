@@ -92,9 +92,10 @@ def update_product(req: https_fn.Request) -> https_fn.Response:
         # Prepare update data
         update_data = {}
         updatable_fields = [
-            'barcodeId', 'category', 'description', 'discountType', 'discountValue',
-            'hasDiscount', 'imageUrl', 'isFavorite', 'isVatApplicable', 'productCode',
-            'productName', 'sellingPrice', 'skuId', 'status', 'totalStock', 'unitType'
+            'barcodeId', 'category', 'costPrice', 'description', 'discountType', 'discountValue',
+            'hasDiscount', 'imageUrl', 'isFavorite', 'isStockTracked', 'isVatApplicable', 'lastUpdated',
+            'originalPrice', 'productCode', 'productName', 'sellingPrice', 'skuId', 'status',
+            'tagLabels', 'tags', 'totalStock', 'unitType', 'vatRate'
         ]
         
         for field in updatable_fields:
@@ -103,6 +104,7 @@ def update_product(req: https_fn.Request) -> https_fn.Response:
         
         # Add update metadata
         update_data['updatedAt'] = firestore.SERVER_TIMESTAMP
+        update_data['lastUpdated'] = firestore.SERVER_TIMESTAMP
         update_data['updatedBy'] = user_info.get('uid')
         
         # Update the document

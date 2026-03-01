@@ -73,6 +73,30 @@ def ts_to_iso(val):
     except Exception:
         return None
 
+
+def normalize_status_history(entries):
+    """Normalize status history entries to a BigQuery-friendly array of structs."""
+    if not isinstance(entries, list):
+        return []
+
+    normalized = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        normalized.append({
+            "status": entry.get("status"),
+            "changedAt": ts_to_iso(entry.get("changedAt")),
+            "changedBy": entry.get("changedBy")
+        })
+    return normalized
+
+
+def normalize_string_list(values):
+    """Return a list of strings for array parameters."""
+    if not isinstance(values, list):
+        return []
+    return [str(v) for v in values if v is not None]
+
 # Import configuration 
 from bq_helpers import build_product_payload
 
@@ -127,6 +151,7 @@ def sync_order_to_bigquery(event: firestore_fn.Event[firestore_fn.DocumentSnapsh
             "atpOrOcn": data.get("atpOrOcn"),
             "birPermitNo": data.get("birPermitNo"),
             "cashSale": data.get("cashSale", False),
+            "chargeSale": data.get("chargeSale", False),
             "companyAddress": data.get("companyAddress"),
             "companyEmail": data.get("companyEmail"),
             "companyId": data.get("companyId"),
@@ -151,10 +176,14 @@ def sync_order_to_bigquery(event: firestore_fn.Event[firestore_fn.DocumentSnapsh
             "payments": {
                 "amountTendered": float(data.get("payments", {}).get("amountTendered", 0)) if data.get("payments") else 0,
                 "changeAmount": float(data.get("payments", {}).get("changeAmount", 0)) if data.get("payments") else 0,
-                "paymentDescription": data.get("payments", {}).get("paymentDescription") if data.get("payments") else None
+                "paymentDescription": data.get("payments", {}).get("paymentDescription") if data.get("payments") else None,
+                "paymentType": data.get("payments", {}).get("paymentType") if data.get("payments") else None
             } if data.get("payments") else None,
             "status": data.get("status", "active"),
+            "statusHistory": normalize_status_history(data.get("statusHistory")),
+            "statusTags": normalize_string_list(data.get("statusTags")),
             "storeId": data.get("storeId"),
+            "tableNumber": data.get("tableNumber"),
             "totalAmount": float(data.get("totalAmount", 0)),
             "uid": data.get("uid"),
             "updatedAt": data.get("updatedAt").isoformat() if data.get("updatedAt") else None,
@@ -196,6 +225,7 @@ def sync_order_to_bigquery(event: firestore_fn.Event[firestore_fn.DocumentSnapsh
                 atpOrOcn = @atpOrOcn,
                 birPermitNo = @birPermitNo,
                 cashSale = @cashSale,
+                chargeSale = @chargeSale,
                 companyAddress = @companyAddress,
                 companyEmail = @companyEmail,
                 companyId = @companyId,
@@ -212,9 +242,12 @@ def sync_order_to_bigquery(event: firestore_fn.Event[firestore_fn.DocumentSnapsh
                 invoiceNumber = @invoiceNumber,
                 message = @message,
                 netAmount = @netAmount,
-                payments = STRUCT(@payments_amountTendered AS amountTendered, @payments_changeAmount AS changeAmount, @payments_paymentDescription AS paymentDescription),
+                                payments = STRUCT(@payments_amountTendered AS amountTendered, @payments_changeAmount AS changeAmount, @payments_paymentDescription AS paymentDescription, @payments_paymentType AS paymentType),
                 status = @status,
+                                statusHistory = @statusHistory,
+                                statusTags = @statusTags,
                 storeId = @storeId,
+                                tableNumber = @tableNumber,
                 totalAmount = @totalAmount,
                 uid = @uid,
                 updatedAt = SAFE_CAST(@updatedAt AS TIMESTAMP),
@@ -224,8 +257,8 @@ def sync_order_to_bigquery(event: firestore_fn.Event[firestore_fn.DocumentSnapsh
                 vatableSales = @vatableSales,
                 zeroRatedSales = @zeroRatedSales
             WHEN NOT MATCHED THEN
-              INSERT (orderId, assignedCashierEmail, assignedCashierId, assignedCashierName, atpOrOcn, birPermitNo, cashSale, companyAddress, companyEmail, companyId, companyName, companyPhone, companyTaxId, createdAt, createdBy, customerInfo, date, discountAmount, grossAmount, inclusiveSerialNumber, invoiceNumber, message, netAmount, payments, status, storeId, totalAmount, uid, updatedAt, updatedBy, vatAmount, vatExemptAmount, vatableSales, zeroRatedSales)
-                            VALUES(@orderId, @assignedCashierEmail, @assignedCashierId, @assignedCashierName, @atpOrOcn, @birPermitNo, @cashSale, @companyAddress, @companyEmail, @companyId, @companyName, @companyPhone, @companyTaxId, SAFE_CAST(@createdAt AS TIMESTAMP), @createdBy, STRUCT(@customer_address AS address, @customer_customerId AS customerId, @customer_fullName AS fullName, @customer_tin AS tin), SAFE_CAST(@date AS TIMESTAMP), @discountAmount, @grossAmount, @inclusiveSerialNumber, @invoiceNumber, @message, @netAmount, STRUCT(@payments_amountTendered AS amountTendered, @payments_changeAmount AS changeAmount, @payments_paymentDescription AS paymentDescription), @status, @storeId, @totalAmount, @uid, SAFE_CAST(@updatedAt AS TIMESTAMP), @updatedBy, @vatAmount, @vatExemptAmount, @vatableSales, @zeroRatedSales)
+                            INSERT (orderId, assignedCashierEmail, assignedCashierId, assignedCashierName, atpOrOcn, birPermitNo, cashSale, chargeSale, companyAddress, companyEmail, companyId, companyName, companyPhone, companyTaxId, createdAt, createdBy, customerInfo, date, discountAmount, grossAmount, inclusiveSerialNumber, invoiceNumber, message, netAmount, payments, status, statusHistory, statusTags, storeId, tableNumber, totalAmount, uid, updatedAt, updatedBy, vatAmount, vatExemptAmount, vatableSales, zeroRatedSales)
+                                                        VALUES(@orderId, @assignedCashierEmail, @assignedCashierId, @assignedCashierName, @atpOrOcn, @birPermitNo, @cashSale, @chargeSale, @companyAddress, @companyEmail, @companyId, @companyName, @companyPhone, @companyTaxId, SAFE_CAST(@createdAt AS TIMESTAMP), @createdBy, STRUCT(@customer_address AS address, @customer_customerId AS customerId, @customer_fullName AS fullName, @customer_tin AS tin), SAFE_CAST(@date AS TIMESTAMP), @discountAmount, @grossAmount, @inclusiveSerialNumber, @invoiceNumber, @message, @netAmount, STRUCT(@payments_amountTendered AS amountTendered, @payments_changeAmount AS changeAmount, @payments_paymentDescription AS paymentDescription, @payments_paymentType AS paymentType), @status, @statusHistory, @statusTags, @storeId, @tableNumber, @totalAmount, @uid, SAFE_CAST(@updatedAt AS TIMESTAMP), @updatedBy, @vatAmount, @vatExemptAmount, @vatableSales, @zeroRatedSales)
             """
 
             params = [
@@ -236,6 +269,7 @@ def sync_order_to_bigquery(event: firestore_fn.Event[firestore_fn.DocumentSnapsh
                 bigquery.ScalarQueryParameter("atpOrOcn", "STRING", data.get("atpOrOcn")),
                 bigquery.ScalarQueryParameter("birPermitNo", "STRING", data.get("birPermitNo")),
                 bigquery.ScalarQueryParameter("cashSale", "BOOL", bool(data.get("cashSale", False))),
+                bigquery.ScalarQueryParameter("chargeSale", "BOOL", bool(data.get("chargeSale", False))),
                 bigquery.ScalarQueryParameter("companyAddress", "STRING", data.get("companyAddress")),
                 bigquery.ScalarQueryParameter("companyEmail", "STRING", data.get("companyEmail")),
                 bigquery.ScalarQueryParameter("companyId", "STRING", data.get("companyId")),
@@ -259,8 +293,12 @@ def sync_order_to_bigquery(event: firestore_fn.Event[firestore_fn.DocumentSnapsh
                 bigquery.ScalarQueryParameter("payments_amountTendered", "FLOAT64", float(data.get('payments', {}).get('amountTendered')) if data.get('payments') and data.get('payments').get('amountTendered') is not None else None),
                 bigquery.ScalarQueryParameter("payments_changeAmount", "FLOAT64", float(data.get('payments', {}).get('changeAmount')) if data.get('payments') and data.get('payments').get('changeAmount') is not None else None),
                 bigquery.ScalarQueryParameter("payments_paymentDescription", "STRING", data.get('payments', {}).get('paymentDescription') if data.get('payments') else None),
+                bigquery.ScalarQueryParameter("payments_paymentType", "STRING", data.get('payments', {}).get('paymentType') if data.get('payments') else None),
                 bigquery.ScalarQueryParameter("status", "STRING", data.get('status')),
+                bigquery.ArrayQueryParameter("statusHistory", "STRUCT<status STRING, changedAt TIMESTAMP, changedBy STRING>", normalize_status_history(data.get('statusHistory'))),
+                bigquery.ArrayQueryParameter("statusTags", "STRING", normalize_string_list(data.get('statusTags'))),
                 bigquery.ScalarQueryParameter("storeId", "STRING", data.get('storeId')),
+                bigquery.ScalarQueryParameter("tableNumber", "STRING", data.get('tableNumber')),
                 bigquery.ScalarQueryParameter("totalAmount", "FLOAT64", float(data.get('totalAmount', 0)) if data.get('totalAmount') is not None else None),
                 bigquery.ScalarQueryParameter("uid", "STRING", data.get('uid')),
                 bigquery.ScalarQueryParameter("updatedAt", "TIMESTAMP", ts_to_iso(data.get('updatedAt'))),
@@ -334,6 +372,7 @@ def sync_order_to_bigquery_update(event: firestore_fn.Event[firestore_fn.Documen
                 atpOrOcn = @atpOrOcn,
                 birPermitNo = @birPermitNo,
                 cashSale = @cashSale,
+                chargeSale = @chargeSale,
                 companyAddress = @companyAddress,
                 companyEmail = @companyEmail,
                 companyId = @companyId,
@@ -350,9 +389,12 @@ def sync_order_to_bigquery_update(event: firestore_fn.Event[firestore_fn.Documen
                 invoiceNumber = @invoiceNumber,
                 message = @message,
                 netAmount = @netAmount,
-                payments = STRUCT(@payments_amountTendered AS amountTendered, @payments_changeAmount AS changeAmount, @payments_paymentDescription AS paymentDescription),
+                                payments = STRUCT(@payments_amountTendered AS amountTendered, @payments_changeAmount AS changeAmount, @payments_paymentDescription AS paymentDescription, @payments_paymentType AS paymentType),
                 status = @status,
+                                statusHistory = @statusHistory,
+                                statusTags = @statusTags,
                 storeId = @storeId,
+                                tableNumber = @tableNumber,
                 totalAmount = @totalAmount,
                 uid = @uid,
                 updatedAt = SAFE_CAST(@updatedAt AS TIMESTAMP),
@@ -362,8 +404,8 @@ def sync_order_to_bigquery_update(event: firestore_fn.Event[firestore_fn.Documen
                 vatableSales = @vatableSales,
                 zeroRatedSales = @zeroRatedSales
             WHEN NOT MATCHED THEN
-              INSERT (orderId, assignedCashierEmail, assignedCashierId, assignedCashierName, atpOrOcn, birPermitNo, cashSale, companyAddress, companyEmail, companyId, companyName, companyPhone, companyTaxId, createdAt, createdBy, customerInfo, date, discountAmount, grossAmount, inclusiveSerialNumber, invoiceNumber, message, netAmount, payments, status, storeId, totalAmount, uid, updatedAt, updatedBy, vatAmount, vatExemptAmount, vatableSales, zeroRatedSales)
-                            VALUES(@orderId, @assignedCashierEmail, @assignedCashierId, @assignedCashierName, @atpOrOcn, @birPermitNo, @cashSale, @companyAddress, @companyEmail, @companyId, @companyName, @companyPhone, @companyTaxId, SAFE_CAST(@createdAt AS TIMESTAMP), @createdBy, STRUCT(@customer_address AS address, @customer_customerId AS customerId, @customer_fullName AS fullName, @customer_tin AS tin), SAFE_CAST(@date AS TIMESTAMP), @discountAmount, @grossAmount, @inclusiveSerialNumber, @invoiceNumber, @message, @netAmount, STRUCT(@payments_amountTendered AS amountTendered, @payments_changeAmount AS changeAmount, @payments_paymentDescription AS paymentDescription), @status, @storeId, @totalAmount, @uid, SAFE_CAST(@updatedAt AS TIMESTAMP), @updatedBy, @vatAmount, @vatExemptAmount, @vatableSales, @zeroRatedSales)
+                            INSERT (orderId, assignedCashierEmail, assignedCashierId, assignedCashierName, atpOrOcn, birPermitNo, cashSale, chargeSale, companyAddress, companyEmail, companyId, companyName, companyPhone, companyTaxId, createdAt, createdBy, customerInfo, date, discountAmount, grossAmount, inclusiveSerialNumber, invoiceNumber, message, netAmount, payments, status, statusHistory, statusTags, storeId, tableNumber, totalAmount, uid, updatedAt, updatedBy, vatAmount, vatExemptAmount, vatableSales, zeroRatedSales)
+                                                        VALUES(@orderId, @assignedCashierEmail, @assignedCashierId, @assignedCashierName, @atpOrOcn, @birPermitNo, @cashSale, @chargeSale, @companyAddress, @companyEmail, @companyId, @companyName, @companyPhone, @companyTaxId, SAFE_CAST(@createdAt AS TIMESTAMP), @createdBy, STRUCT(@customer_address AS address, @customer_customerId AS customerId, @customer_fullName AS fullName, @customer_tin AS tin), SAFE_CAST(@date AS TIMESTAMP), @discountAmount, @grossAmount, @inclusiveSerialNumber, @invoiceNumber, @message, @netAmount, STRUCT(@payments_amountTendered AS amountTendered, @payments_changeAmount AS changeAmount, @payments_paymentDescription AS paymentDescription, @payments_paymentType AS paymentType), @status, @statusHistory, @statusTags, @storeId, @tableNumber, @totalAmount, @uid, SAFE_CAST(@updatedAt AS TIMESTAMP), @updatedBy, @vatAmount, @vatExemptAmount, @vatableSales, @zeroRatedSales)
             """
 
             params = [
@@ -374,6 +416,7 @@ def sync_order_to_bigquery_update(event: firestore_fn.Event[firestore_fn.Documen
                 bigquery.ScalarQueryParameter("atpOrOcn", "STRING", after.get("atpOrOcn")),
                 bigquery.ScalarQueryParameter("birPermitNo", "STRING", after.get("birPermitNo")),
                 bigquery.ScalarQueryParameter("cashSale", "BOOL", bool(after.get("cashSale", False))),
+                bigquery.ScalarQueryParameter("chargeSale", "BOOL", bool(after.get("chargeSale", False))),
                 bigquery.ScalarQueryParameter("companyAddress", "STRING", after.get("companyAddress")),
                 bigquery.ScalarQueryParameter("companyEmail", "STRING", after.get("companyEmail")),
                 bigquery.ScalarQueryParameter("companyId", "STRING", after.get("companyId")),
@@ -397,8 +440,12 @@ def sync_order_to_bigquery_update(event: firestore_fn.Event[firestore_fn.Documen
                 bigquery.ScalarQueryParameter("payments_amountTendered", "FLOAT64", float(after.get('payments', {}).get('amountTendered')) if after.get('payments') and after.get('payments').get('amountTendered') is not None else None),
                 bigquery.ScalarQueryParameter("payments_changeAmount", "FLOAT64", float(after.get('payments', {}).get('changeAmount')) if after.get('payments') and after.get('payments').get('changeAmount') is not None else None),
                 bigquery.ScalarQueryParameter("payments_paymentDescription", "STRING", after.get('payments', {}).get('paymentDescription') if after.get('payments') else None),
+                bigquery.ScalarQueryParameter("payments_paymentType", "STRING", after.get('payments', {}).get('paymentType') if after.get('payments') else None),
                 bigquery.ScalarQueryParameter("status", "STRING", after.get('status')),
+                bigquery.ArrayQueryParameter("statusHistory", "STRUCT<status STRING, changedAt TIMESTAMP, changedBy STRING>", normalize_status_history(after.get('statusHistory'))),
+                bigquery.ArrayQueryParameter("statusTags", "STRING", normalize_string_list(after.get('statusTags'))),
                 bigquery.ScalarQueryParameter("storeId", "STRING", after.get('storeId')),
+                bigquery.ScalarQueryParameter("tableNumber", "STRING", after.get('tableNumber')),
                 bigquery.ScalarQueryParameter("totalAmount", "FLOAT64", float(after.get('totalAmount', 0)) if after.get('totalAmount') is not None else None),
                 bigquery.ScalarQueryParameter("uid", "STRING", after.get('uid')),
                 bigquery.ScalarQueryParameter("updatedAt", "TIMESTAMP", ts_to_iso(after.get('updatedAt'))),
@@ -619,6 +666,7 @@ def sync_products_to_bigquery(event: firestore_fn.Event[firestore_fn.DocumentSna
             "barcodeId": data.get("barcodeId"),
             "category": data.get("category"),
             "companyId": data.get("companyId"),
+            "costPrice": float(data.get("costPrice", 0)) if data.get("costPrice") is not None else None,
             "createdAt": ts_to_iso(data.get("createdAt")),
             "createdBy": data.get("createdBy"),
             "description": data.get("description"),
@@ -627,16 +675,22 @@ def sync_products_to_bigquery(event: firestore_fn.Event[firestore_fn.DocumentSna
             "hasDiscount": bool(data.get("hasDiscount", False)),
             "imageUrl": data.get("imageUrl"),
             "isFavorite": bool(data.get("isFavorite", False)),
+            "isStockTracked": bool(data.get("isStockTracked", False)),
             "isVatApplicable": bool(data.get("isVatApplicable", False)),
+            "lastUpdated": ts_to_iso(data.get("lastUpdated")),
+            "originalPrice": float(data.get("originalPrice", 0)) if data.get("originalPrice") is not None else None,
             "productCode": data.get("productCode"),
             "productName": data.get("productName"),
             "sellingPrice": float(data.get("sellingPrice", 0)) if data.get("sellingPrice") is not None else None,
             "skuId": data.get("skuId"),
             "status": data.get("status"),
             "storeId": data.get("storeId"),
+            "tagLabels": data.get("tagLabels") if isinstance(data.get("tagLabels"), list) else None,
+            "tags": data.get("tags") if isinstance(data.get("tags"), list) else None,
             "totalStock": int(data.get("totalStock", 0)) if data.get("totalStock") is not None else None,
             "uid": data.get("uid"),
             "unitType": data.get("unitType"),
+            "vatRate": float(data.get("vatRate", 0)) if data.get("vatRate") is not None else None,
             "updatedAt": ts_to_iso(data.get("updatedAt")),
             "updatedBy": data.get("updatedBy")
         }
@@ -669,6 +723,7 @@ def sync_products_to_bigquery(event: firestore_fn.Event[firestore_fn.DocumentSna
                 barcodeId = @barcodeId,
                 category = @category,
                 companyId = @companyId,
+                                costPrice = @costPrice,
                 createdAt = SAFE_CAST(@createdAt AS TIMESTAMP),
                 createdBy = @createdBy,
                 description = @description,
@@ -677,21 +732,27 @@ def sync_products_to_bigquery(event: firestore_fn.Event[firestore_fn.DocumentSna
                 hasDiscount = @hasDiscount,
                 imageUrl = @imageUrl,
                 isFavorite = @isFavorite,
+                                isStockTracked = @isStockTracked,
                 isVatApplicable = @isVatApplicable,
+                                lastUpdated = SAFE_CAST(@lastUpdated AS TIMESTAMP),
+                                originalPrice = @originalPrice,
                 productCode = @productCode,
                 productName = @productName,
                 sellingPrice = @sellingPrice,
                 skuId = @skuId,
                 status = @status,
                 storeId = @storeId,
+                                tagLabels = @tagLabels,
+                                tags = @tags,
                 totalStock = @totalStock,
                 uid = @uid,
                 unitType = @unitType,
+                                vatRate = @vatRate,
                 updatedAt = SAFE_CAST(@updatedAt AS TIMESTAMP),
                 updatedBy = @updatedBy
             WHEN NOT MATCHED THEN
-              INSERT (productId, barcodeId, category, companyId, createdAt, createdBy, description, discountType, discountValue, hasDiscount, imageUrl, isFavorite, isVatApplicable, productCode, productName, sellingPrice, skuId, status, storeId, totalStock, uid, unitType, updatedAt, updatedBy)
-              VALUES(@productId, @barcodeId, @category, @companyId, SAFE_CAST(@createdAt AS TIMESTAMP), @createdBy, @description, @discountType, @discountValue, @hasDiscount, @imageUrl, @isFavorite, @isVatApplicable, @productCode, @productName, @sellingPrice, @skuId, @status, @storeId, @totalStock, @uid, @unitType, SAFE_CAST(@updatedAt AS TIMESTAMP), @updatedBy)
+                            INSERT (productId, barcodeId, category, companyId, costPrice, createdAt, createdBy, description, discountType, discountValue, hasDiscount, imageUrl, isFavorite, isStockTracked, isVatApplicable, lastUpdated, originalPrice, productCode, productName, sellingPrice, skuId, status, storeId, tagLabels, tags, totalStock, uid, unitType, vatRate, updatedAt, updatedBy)
+                            VALUES(@productId, @barcodeId, @category, @companyId, @costPrice, SAFE_CAST(@createdAt AS TIMESTAMP), @createdBy, @description, @discountType, @discountValue, @hasDiscount, @imageUrl, @isFavorite, @isStockTracked, @isVatApplicable, SAFE_CAST(@lastUpdated AS TIMESTAMP), @originalPrice, @productCode, @productName, @sellingPrice, @skuId, @status, @storeId, @tagLabels, @tags, @totalStock, @uid, @unitType, @vatRate, SAFE_CAST(@updatedAt AS TIMESTAMP), @updatedBy)
             """
 
             params = [
@@ -699,6 +760,7 @@ def sync_products_to_bigquery(event: firestore_fn.Event[firestore_fn.DocumentSna
                 bigquery.ScalarQueryParameter("barcodeId", "STRING", data.get("barcodeId")),
                 bigquery.ScalarQueryParameter("category", "STRING", data.get("category")),
                 bigquery.ScalarQueryParameter("companyId", "STRING", data.get("companyId")),
+                bigquery.ScalarQueryParameter("costPrice", "FLOAT64", float(data.get('costPrice', 0)) if data.get('costPrice') is not None else None),
                 bigquery.ScalarQueryParameter("createdAt", "TIMESTAMP", ts_to_iso(data.get('createdAt'))),
                 bigquery.ScalarQueryParameter("createdBy", "STRING", data.get("createdBy")),
                 bigquery.ScalarQueryParameter("description", "STRING", data.get("description")),
@@ -707,16 +769,22 @@ def sync_products_to_bigquery(event: firestore_fn.Event[firestore_fn.DocumentSna
                 bigquery.ScalarQueryParameter("hasDiscount", "BOOL", bool(data.get('hasDiscount', False))),
                 bigquery.ScalarQueryParameter("imageUrl", "STRING", data.get('imageUrl')),
                 bigquery.ScalarQueryParameter("isFavorite", "BOOL", bool(data.get('isFavorite', False))),
+                bigquery.ScalarQueryParameter("isStockTracked", "BOOL", bool(data.get('isStockTracked', False))),
                 bigquery.ScalarQueryParameter("isVatApplicable", "BOOL", bool(data.get('isVatApplicable', False))),
+                bigquery.ScalarQueryParameter("lastUpdated", "TIMESTAMP", ts_to_iso(data.get('lastUpdated'))),
+                bigquery.ScalarQueryParameter("originalPrice", "FLOAT64", float(data.get('originalPrice', 0)) if data.get('originalPrice') is not None else None),
                 bigquery.ScalarQueryParameter("productCode", "STRING", data.get('productCode')),
                 bigquery.ScalarQueryParameter("productName", "STRING", data.get('productName')),
                 bigquery.ScalarQueryParameter("sellingPrice", "FLOAT64", float(data.get('sellingPrice', 0)) if data.get('sellingPrice') is not None else None),
                 bigquery.ScalarQueryParameter("skuId", "STRING", data.get('skuId')),
                 bigquery.ScalarQueryParameter("status", "STRING", data.get('status')),
                 bigquery.ScalarQueryParameter("storeId", "STRING", data.get('storeId')),
+                bigquery.ArrayQueryParameter("tagLabels", "STRING", data.get('tagLabels') if isinstance(data.get('tagLabels'), list) else []),
+                bigquery.ArrayQueryParameter("tags", "STRING", data.get('tags') if isinstance(data.get('tags'), list) else []),
                 bigquery.ScalarQueryParameter("totalStock", "INT64", int(data.get('totalStock', 0)) if data.get('totalStock') is not None else None),
                 bigquery.ScalarQueryParameter("uid", "STRING", data.get('uid')),
                 bigquery.ScalarQueryParameter("unitType", "STRING", data.get('unitType')),
+                bigquery.ScalarQueryParameter("vatRate", "FLOAT64", float(data.get('vatRate', 0)) if data.get('vatRate') is not None else None),
                 bigquery.ScalarQueryParameter("updatedAt", "TIMESTAMP", ts_to_iso(data.get('updatedAt'))),
                 bigquery.ScalarQueryParameter("updatedBy", "STRING", data.get('updatedBy'))
             ]
@@ -777,6 +845,7 @@ def sync_products_to_bigquery_update(event: firestore_fn.Event[firestore_fn.Docu
                 barcodeId = @barcodeId,
                 category = @category,
                 companyId = @companyId,
+                                costPrice = @costPrice,
                 createdAt = SAFE_CAST(@createdAt AS TIMESTAMP),
                 createdBy = @createdBy,
                 description = @description,
@@ -785,21 +854,27 @@ def sync_products_to_bigquery_update(event: firestore_fn.Event[firestore_fn.Docu
                 hasDiscount = @hasDiscount,
                 imageUrl = @imageUrl,
                 isFavorite = @isFavorite,
+                                isStockTracked = @isStockTracked,
                 isVatApplicable = @isVatApplicable,
+                                lastUpdated = SAFE_CAST(@lastUpdated AS TIMESTAMP),
+                                originalPrice = @originalPrice,
                 productCode = @productCode,
                 productName = @productName,
                 sellingPrice = @sellingPrice,
                 skuId = @skuId,
                 status = @status,
                 storeId = @storeId,
+                                tagLabels = @tagLabels,
+                                tags = @tags,
                 totalStock = @totalStock,
                 uid = @uid,
                 unitType = @unitType,
+                                vatRate = @vatRate,
                 updatedAt = SAFE_CAST(@updatedAt AS TIMESTAMP),
                 updatedBy = @updatedBy
             WHEN NOT MATCHED THEN
-              INSERT (productId, barcodeId, category, companyId, createdAt, createdBy, description, discountType, discountValue, hasDiscount, imageUrl, isFavorite, isVatApplicable, productCode, productName, sellingPrice, skuId, status, storeId, totalStock, uid, unitType, updatedAt, updatedBy)
-              VALUES(@productId, @barcodeId, @category, @companyId, SAFE_CAST(@createdAt AS TIMESTAMP), @createdBy, @description, @discountType, @discountValue, @hasDiscount, @imageUrl, @isFavorite, @isVatApplicable, @productCode, @productName, @sellingPrice, @skuId, @status, @storeId, @totalStock, @uid, @unitType, SAFE_CAST(@updatedAt AS TIMESTAMP), @updatedBy)
+                            INSERT (productId, barcodeId, category, companyId, costPrice, createdAt, createdBy, description, discountType, discountValue, hasDiscount, imageUrl, isFavorite, isStockTracked, isVatApplicable, lastUpdated, originalPrice, productCode, productName, sellingPrice, skuId, status, storeId, tagLabels, tags, totalStock, uid, unitType, vatRate, updatedAt, updatedBy)
+                            VALUES(@productId, @barcodeId, @category, @companyId, @costPrice, SAFE_CAST(@createdAt AS TIMESTAMP), @createdBy, @description, @discountType, @discountValue, @hasDiscount, @imageUrl, @isFavorite, @isStockTracked, @isVatApplicable, SAFE_CAST(@lastUpdated AS TIMESTAMP), @originalPrice, @productCode, @productName, @sellingPrice, @skuId, @status, @storeId, @tagLabels, @tags, @totalStock, @uid, @unitType, @vatRate, SAFE_CAST(@updatedAt AS TIMESTAMP), @updatedBy)
             """
 
             params = [
@@ -807,6 +882,7 @@ def sync_products_to_bigquery_update(event: firestore_fn.Event[firestore_fn.Docu
                 bigquery.ScalarQueryParameter("barcodeId", "STRING", after.get("barcodeId")),
                 bigquery.ScalarQueryParameter("category", "STRING", after.get("category")),
                 bigquery.ScalarQueryParameter("companyId", "STRING", after.get("companyId")),
+                bigquery.ScalarQueryParameter("costPrice", "FLOAT64", float(after.get('costPrice', 0)) if after.get('costPrice') is not None else None),
                 bigquery.ScalarQueryParameter("createdAt", "TIMESTAMP", ts_to_iso(after.get('createdAt'))),
                 bigquery.ScalarQueryParameter("createdBy", "STRING", after.get("createdBy")),
                 bigquery.ScalarQueryParameter("description", "STRING", after.get("description")),
@@ -815,16 +891,22 @@ def sync_products_to_bigquery_update(event: firestore_fn.Event[firestore_fn.Docu
                 bigquery.ScalarQueryParameter("hasDiscount", "BOOL", bool(after.get('hasDiscount', False))),
                 bigquery.ScalarQueryParameter("imageUrl", "STRING", after.get('imageUrl')),
                 bigquery.ScalarQueryParameter("isFavorite", "BOOL", bool(after.get('isFavorite', False))),
+                bigquery.ScalarQueryParameter("isStockTracked", "BOOL", bool(after.get('isStockTracked', False))),
                 bigquery.ScalarQueryParameter("isVatApplicable", "BOOL", bool(after.get('isVatApplicable', False))),
+                bigquery.ScalarQueryParameter("lastUpdated", "TIMESTAMP", ts_to_iso(after.get('lastUpdated'))),
+                bigquery.ScalarQueryParameter("originalPrice", "FLOAT64", float(after.get('originalPrice', 0)) if after.get('originalPrice') is not None else None),
                 bigquery.ScalarQueryParameter("productCode", "STRING", after.get('productCode')),
                 bigquery.ScalarQueryParameter("productName", "STRING", after.get('productName')),
                 bigquery.ScalarQueryParameter("sellingPrice", "FLOAT64", float(after.get('sellingPrice', 0)) if after.get('sellingPrice') is not None else None),
                 bigquery.ScalarQueryParameter("skuId", "STRING", after.get('skuId')),
                 bigquery.ScalarQueryParameter("status", "STRING", after.get('status')),
                 bigquery.ScalarQueryParameter("storeId", "STRING", after.get('storeId')),
+                bigquery.ArrayQueryParameter("tagLabels", "STRING", after.get('tagLabels') if isinstance(after.get('tagLabels'), list) else []),
+                bigquery.ArrayQueryParameter("tags", "STRING", after.get('tags') if isinstance(after.get('tags'), list) else []),
                 bigquery.ScalarQueryParameter("totalStock", "INT64", int(after.get('totalStock', 0)) if after.get('totalStock') is not None else None),
                 bigquery.ScalarQueryParameter("uid", "STRING", after.get('uid')),
                 bigquery.ScalarQueryParameter("unitType", "STRING", after.get('unitType')),
+                bigquery.ScalarQueryParameter("vatRate", "FLOAT64", float(after.get('vatRate', 0)) if after.get('vatRate') is not None else None),
                 bigquery.ScalarQueryParameter("updatedAt", "TIMESTAMP", ts_to_iso(after.get('updatedAt'))),
                 bigquery.ScalarQueryParameter("updatedBy", "STRING", after.get('updatedBy'))
             ]
@@ -909,7 +991,11 @@ def sync_order_selling_tracking_to_bigquery(event: firestore_fn.Event[firestore_
         payload = {
             "ordersSellingTrackingId": ost_id,
             "batchNumber": to_int(data.get("batchNumber")),
+            "cashierEmail": data.get("cashierEmail"),
+            "cashierId": data.get("cashierId"),
+            "cashierName": data.get("cashierName"),
             "companyId": data.get("companyId"),
+            "cost": to_numeric(data.get("cost")),
             "createdAt": ts_to_iso(data.get("createdAt")),
             "createdBy": data.get("createdBy"),
             "orderId": data.get("orderId"),
@@ -917,6 +1003,8 @@ def sync_order_selling_tracking_to_bigquery(event: firestore_fn.Event[firestore_
             "status": data.get("status"),
             "storeId": data.get("storeId"),
             "uid": data.get("uid"),
+            "isStockTracked": bool(data.get("isStockTracked", False)),
+            "runningBalanceTotalStock": to_int(data.get("runningBalanceTotalStock")),
             "updatedAt": ts_to_iso(data.get("updatedAt")),
             "updatedBy": data.get("updatedBy"),
             "itemIndex": to_int(data.get("itemIndex")),
@@ -1009,7 +1097,11 @@ def sync_order_selling_tracking_update(event: firestore_fn.Event[firestore_fn.Do
         payload = {
             "ordersSellingTrackingId": ost_id,
             "batchNumber": to_int(after.get("batchNumber")),
+            "cashierEmail": after.get("cashierEmail"),
+            "cashierId": after.get("cashierId"),
+            "cashierName": after.get("cashierName"),
             "companyId": after.get("companyId"),
+            "cost": to_numeric(after.get("cost")),
             "createdAt": ts_to_iso(after.get("createdAt")),
             "createdBy": after.get("createdBy"),
             "orderId": after.get("orderId"),
@@ -1017,6 +1109,8 @@ def sync_order_selling_tracking_update(event: firestore_fn.Event[firestore_fn.Do
             "status": after.get("status"),
             "storeId": after.get("storeId"),
             "uid": after.get("uid"),
+            "isStockTracked": bool(after.get("isStockTracked", False)),
+            "runningBalanceTotalStock": to_int(after.get("runningBalanceTotalStock")),
             "updatedAt": ts_to_iso(after.get("updatedAt")),
             "updatedBy": after.get("updatedBy"),
             "itemIndex": to_int(after.get("itemIndex")),
@@ -1050,7 +1144,11 @@ def sync_order_selling_tracking_update(event: firestore_fn.Event[firestore_fn.Do
           SELECT 
             @ordersSellingTrackingId as ordersSellingTrackingId,
             @batchNumber as batchNumber,
+                        @cashierEmail as cashierEmail,
+                        @cashierId as cashierId,
+                        @cashierName as cashierName,
             @companyId as companyId,
+                        SAFE_CAST(@cost AS NUMERIC) as cost,
             SAFE_CAST(@createdAt AS TIMESTAMP) as createdAt,
             @createdBy as createdBy,
             @orderId as orderId,
@@ -1058,6 +1156,8 @@ def sync_order_selling_tracking_update(event: firestore_fn.Event[firestore_fn.Do
             @status as status,
             @storeId as storeId,
             @uid as uid,
+                        @isStockTracked as isStockTracked,
+                        @runningBalanceTotalStock as runningBalanceTotalStock,
             SAFE_CAST(@updatedAt AS TIMESTAMP) as updatedAt,
             @updatedBy as updatedBy,
             @itemIndex as itemIndex,
@@ -1075,7 +1175,11 @@ def sync_order_selling_tracking_update(event: firestore_fn.Event[firestore_fn.Do
         WHEN MATCHED THEN
           UPDATE SET 
             batchNumber = S.batchNumber,
+                        cashierEmail = S.cashierEmail,
+                        cashierId = S.cashierId,
+                        cashierName = S.cashierName,
             companyId = S.companyId,
+                        cost = S.cost,
             createdAt = S.createdAt,
             createdBy = S.createdBy,
             orderId = S.orderId,
@@ -1083,6 +1187,8 @@ def sync_order_selling_tracking_update(event: firestore_fn.Event[firestore_fn.Do
             status = S.status,
             storeId = S.storeId,
             uid = S.uid,
+                        isStockTracked = S.isStockTracked,
+                        runningBalanceTotalStock = S.runningBalanceTotalStock,
             updatedAt = S.updatedAt,
             updatedBy = S.updatedBy,
             itemIndex = S.itemIndex,
@@ -1096,8 +1202,8 @@ def sync_order_selling_tracking_update(event: firestore_fn.Event[firestore_fn.Do
             total = S.total,
             isVatExempt = S.isVatExempt
         WHEN NOT MATCHED THEN
-          INSERT (ordersSellingTrackingId, batchNumber, companyId, createdAt, createdBy, orderId, orderDetailsId, status, storeId, uid, updatedAt, updatedBy, itemIndex, productId, productName, price, quantity, discount, discountType, vat, total, isVatExempt)
-          VALUES (S.ordersSellingTrackingId, S.batchNumber, S.companyId, S.createdAt, S.createdBy, S.orderId, S.orderDetailsId, S.status, S.storeId, S.uid, S.updatedAt, S.updatedBy, S.itemIndex, S.productId, S.productName, S.price, S.quantity, S.discount, S.discountType, S.vat, S.total, S.isVatExempt)
+                    INSERT (ordersSellingTrackingId, batchNumber, cashierEmail, cashierId, cashierName, companyId, cost, createdAt, createdBy, orderId, orderDetailsId, status, storeId, uid, isStockTracked, runningBalanceTotalStock, updatedAt, updatedBy, itemIndex, productId, productName, price, quantity, discount, discountType, vat, total, isVatExempt)
+                    VALUES (S.ordersSellingTrackingId, S.batchNumber, S.cashierEmail, S.cashierId, S.cashierName, S.companyId, S.cost, S.createdAt, S.createdBy, S.orderId, S.orderDetailsId, S.status, S.storeId, S.uid, S.isStockTracked, S.runningBalanceTotalStock, S.updatedAt, S.updatedBy, S.itemIndex, S.productId, S.productName, S.price, S.quantity, S.discount, S.discountType, S.vat, S.total, S.isVatExempt)
         """
         
         # Convert payload to query parameters for MERGE
@@ -1105,11 +1211,11 @@ def sync_order_selling_tracking_update(event: firestore_fn.Event[firestore_fn.Do
         for key, value in payload.items():
             if key in ['createdAt', 'updatedAt'] and value:
                 query_params.append(bigquery.ScalarQueryParameter(key, "STRING", value))
-            elif key in ['price', 'discount', 'vat', 'total'] and value is not None:
+            elif key in ['price', 'discount', 'vat', 'total', 'cost'] and value is not None:
                 query_params.append(bigquery.ScalarQueryParameter(key, "STRING", str(value)))
-            elif key in ['batchNumber', 'itemIndex', 'quantity'] and value is not None:
+            elif key in ['batchNumber', 'itemIndex', 'quantity', 'runningBalanceTotalStock'] and value is not None:
                 query_params.append(bigquery.ScalarQueryParameter(key, "INT64", int(value)))
-            elif key == 'isVatExempt':
+            elif key in ['isVatExempt', 'isStockTracked']:
                 query_params.append(bigquery.ScalarQueryParameter(key, "BOOL", bool(value)))
             elif key == 'status':
                 # Ensure status is properly converted to string

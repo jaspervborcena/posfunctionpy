@@ -37,6 +37,7 @@ def create_partitioned_table():
         bigquery.SchemaField("createdAt", "TIMESTAMP"),
         bigquery.SchemaField("createdBy", "STRING"),
         bigquery.SchemaField("orderId", "STRING"),
+        bigquery.SchemaField("status", "STRING"),
         bigquery.SchemaField("storeId", "STRING"),
         bigquery.SchemaField("uid", "STRING"),
         bigquery.SchemaField("updatedAt", "TIMESTAMP"),
