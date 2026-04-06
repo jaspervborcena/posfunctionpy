@@ -176,8 +176,7 @@ def sync_order_to_bigquery(event: firestore_fn.Event[firestore_fn.DocumentSnapsh
             "payments": {
                 "amountTendered": float(data.get("payments", {}).get("amountTendered", 0)) if data.get("payments") else 0,
                 "changeAmount": float(data.get("payments", {}).get("changeAmount", 0)) if data.get("payments") else 0,
-                "paymentDescription": data.get("payments", {}).get("paymentDescription") if data.get("payments") else None,
-                "paymentType": data.get("payments", {}).get("paymentType") if data.get("payments") else None
+                "paymentDescription": data.get("payments", {}).get("paymentDescription") if data.get("payments") else None
             } if data.get("payments") else None,
             "status": data.get("status", "active"),
             "statusHistory": normalize_status_history(data.get("statusHistory")),
@@ -309,8 +308,7 @@ def sync_order_to_bigquery_update(event: firestore_fn.Event[firestore_fn.Documen
             "payments": {
                 "amountTendered": float(after.get("payments", {}).get("amountTendered", 0)) if after.get("payments") else 0,
                 "changeAmount": float(after.get("payments", {}).get("changeAmount", 0)) if after.get("payments") else 0,
-                "paymentDescription": after.get("payments", {}).get("paymentDescription") if after.get("payments") else None,
-                "paymentType": after.get("payments", {}).get("paymentType") if after.get("payments") else None
+                "paymentDescription": after.get("payments", {}).get("paymentDescription") if after.get("payments") else None
             } if after.get("payments") else None,
             "status": after.get("status", "active"),
             "statusHistory": normalize_status_history(after.get("statusHistory")),
