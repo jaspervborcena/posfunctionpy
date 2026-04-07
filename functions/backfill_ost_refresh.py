@@ -1,15 +1,14 @@
 """
-Local backfill script: Firestore ordersSellingTracking -> BigQuery (prod)
+Full refresh backfill for ordersSellingTracking — wipes BQ table and re-inserts
+all Firestore docs with the updated payload (now including category, invoiceNumber,
+productCode, skuId, tagLabels, tags).
 
-Run from the functions/ directory:
-    python backfill_ost.py
+Run from functions/ directory:
+    python backfill_ost_refresh.py
 
-Optional args:
-    --start 2025-01-01   Start date (inclusive, filters on createdAt). Default: all history.
-    --end   2026-04-06   End date   (inclusive). Default: today.
-    --dry-run            Print counts but don't insert.
+Optional:
+    --dry-run   Count only, no writes.
 """
-import sys
 import argparse
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
@@ -19,16 +18,13 @@ from firebase_admin import credentials, firestore
 from google.cloud import bigquery
 from google.oauth2 import service_account
 
-# ── Config ──────────────────────────────────────────────────────────────────
-SA_FILE      = "service-account.json"
-BQ_PROJECT   = "jasperpos-1dfd5"
-BQ_DATASET   = "tovrika_pos"
-OST_TABLE    = f"{BQ_PROJECT}.{BQ_DATASET}.ordersSellingTracking"
+SA_FILE    = "service-account.json"
+BQ_PROJECT = "jasperpos-1dfd5"
+OST_TABLE  = f"{BQ_PROJECT}.tovrika_pos.ordersSellingTracking"
 FIRESTORE_COLL = "ordersSellingTracking"
-BATCH_SIZE   = 200
+BATCH_SIZE = 200
 
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
 def ts_to_iso(val):
     if val is None:
         return None
@@ -39,8 +35,6 @@ def ts_to_iso(val):
             return val.isoformat()
         if hasattr(val, 'to_datetime'):
             return val.to_datetime().isoformat()
-        if hasattr(val, 'ToDatetime'):
-            return val.ToDatetime().isoformat()
         if isinstance(val, dict):
             if 'seconds' in val:
                 dt = datetime.fromtimestamp(float(val['seconds']) + float(val.get('nanos', 0)) / 1e9, tz=timezone.utc)
@@ -71,8 +65,6 @@ def to_numeric(v):
     try:
         if v is None:
             return None
-        if isinstance(v, Decimal):
-            return str(v)
         return str(Decimal(str(v)))
     except (InvalidOperation, ValueError, TypeError):
         return None
@@ -128,94 +120,56 @@ def build_ost_payload(ost_id, d):
     return clean_payload(payload)
 
 
-# ── Main ─────────────────────────────────────────────────────────────────────
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--start",   default=None, help="Start date YYYY-MM-DD (inclusive)")
-    parser.add_argument("--end",     default=None, help="End date YYYY-MM-DD (inclusive)")
-    parser.add_argument("--dry-run", action="store_true", help="Count only, don't insert")
+    parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
-    # ── Init Firebase Admin ──────────────────────────────────────────────────
     cred = credentials.Certificate(SA_FILE)
     firebase_admin.initialize_app(cred)
     db = firestore.client()
 
-    # ── Init BigQuery ────────────────────────────────────────────────────────
     sa_creds = service_account.Credentials.from_service_account_file(
-        SA_FILE,
-        scopes=["https://www.googleapis.com/auth/cloud-platform"]
+        SA_FILE, scopes=["https://www.googleapis.com/auth/cloud-platform"]
     )
     bq = bigquery.Client(project=BQ_PROJECT, credentials=sa_creds)
 
-    # ── Fetch existing IDs from BQ to avoid duplicates ───────────────────────
-    print("🔍 Fetching existing ordersSellingTrackingIds from BigQuery...")
-    existing_ids = set()
-    try:
-        rows = bq.query(f"SELECT ordersSellingTrackingId FROM `{OST_TABLE}`").result()
-        for row in rows:
-            existing_ids.add(row.ordersSellingTrackingId)
-        print(f"   Found {len(existing_ids)} existing rows in BigQuery")
-    except Exception as e:
-        print(f"⚠️  Could not fetch existing IDs (table may be empty): {e}")
+    # Fetch all Firestore docs
+    print(f"📥 Fetching all docs from Firestore '{FIRESTORE_COLL}'...")
+    docs = list(db.collection(FIRESTORE_COLL).stream())
+    print(f"   Found {len(docs)} documents")
 
-    # ── Fetch from Firestore ─────────────────────────────────────────────────
-    print(f"📥 Fetching from Firestore '{FIRESTORE_COLL}'...")
-    query = db.collection(FIRESTORE_COLL)
-
-    if args.start:
-        start_dt = datetime.fromisoformat(args.start).replace(tzinfo=timezone.utc)
-        query = query.where("createdAt", ">=", start_dt)
-    if args.end:
-        from datetime import timedelta
-        end_dt = datetime.fromisoformat(args.end).replace(tzinfo=timezone.utc).replace(hour=23, minute=59, second=59)
-        query = query.where("createdAt", "<=", end_dt)
-
-    docs = list(query.stream())
-    print(f"   Found {len(docs)} documents in Firestore")
-
-    # ── Build payloads ───────────────────────────────────────────────────────
-    to_insert = []
-    skipped = 0
-    for doc in docs:
-        ost_id = doc.id
-        if ost_id in existing_ids:
-            skipped += 1
-            continue
-        d = doc.to_dict()
-        payload = build_ost_payload(ost_id, d)
-        to_insert.append(payload)
-
-    print(f"   {len(to_insert)} to insert, {skipped} skipped (already in BQ)")
+    # Build payloads
+    payloads = [build_ost_payload(doc.id, doc.to_dict()) for doc in docs]
 
     if args.dry_run:
-        print("🔵 Dry run — no data written.")
+        print(f"🔵 Dry run — would delete all BQ rows and re-insert {len(payloads)} rows.")
+        print(f"   Sample fields in first payload: {list(payloads[0].keys()) if payloads else []}")
         return
 
-    if not to_insert:
-        print("✅ Nothing to insert.")
-        return
+    # Truncate BQ table
+    print(f"🗑️  Truncating {OST_TABLE}...")
+    bq.query(f"TRUNCATE TABLE `{OST_TABLE}`").result()
+    print("   Done.")
 
-    # ── Batch insert ─────────────────────────────────────────────────────────
+    # Batch insert
     table = bq.get_table(OST_TABLE)
     inserted = 0
     errors = []
 
-    for i in range(0, len(to_insert), BATCH_SIZE):
-        batch = to_insert[i:i + BATCH_SIZE]
+    for i in range(0, len(payloads), BATCH_SIZE):
+        batch = payloads[i:i + BATCH_SIZE]
         errs = bq.insert_rows_json(table, batch)
         if errs:
-            for e in errs:
-                errors.append(e)
-                print(f"❌ Insert error: {e}")
+            errors.extend(errs)
+            print(f"❌ Errors in batch {i // BATCH_SIZE + 1}: {errs}")
         else:
             inserted += len(batch)
-            print(f"   ✅ Inserted batch {i // BATCH_SIZE + 1}: {len(batch)} rows (total so far: {inserted})")
+            print(f"   ✅ Batch {i // BATCH_SIZE + 1}: {len(batch)} rows (total: {inserted})")
 
     print(f"\n{'='*50}")
     print(f"✅ Done. Inserted: {inserted} | Errors: {len(errors)}")
     if errors:
-        print("❌ Errors:")
         for e in errors:
             print(f"   {e}")
 

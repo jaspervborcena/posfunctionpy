@@ -879,33 +879,37 @@ def sync_order_selling_tracking_to_bigquery(event: firestore_fn.Event[firestore_
             "cashierEmail": data.get("cashierEmail"),
             "cashierId": data.get("cashierId"),
             "cashierName": data.get("cashierName"),
+            "category": data.get("category"),
             "companyId": data.get("companyId"),
             "cost": to_numeric(data.get("cost")),
             "createdAt": ts_to_iso(data.get("createdAt")),
             "createdBy": data.get("createdBy"),
-            "orderId": data.get("orderId"),
-            "orderDetailsId": data.get("orderDetailsId"),
-            "status": data.get("status"),
-            "storeId": data.get("storeId"),
-            "uid": data.get("uid"),
-            "isStockTracked": bool(data.get("isStockTracked", False)),
-            "runningBalanceTotalStock": to_int(data.get("runningBalanceTotalStock")),
-            "updatedAt": ts_to_iso(data.get("updatedAt")),
-            "updatedBy": data.get("updatedBy"),
-            "itemIndex": to_int(data.get("itemIndex")),
-            "productId": data.get("productId"),
-            "productName": data.get("productName"),
-            "price": to_numeric(data.get("price")),
-            "quantity": to_int(data.get("quantity")),
             "discount": to_numeric(data.get("discount")),
             "discountType": data.get("discountType"),
-            "vat": to_numeric(data.get("vat")),
-            "total": to_numeric(data.get("total")),
+            "invoiceNumber": data.get("invoiceNumber"),
+            "isStockTracked": bool(data.get("isStockTracked", False)),
             "isVatExempt": bool(data.get("isVatExempt", False)),
+            "itemIndex": to_int(data.get("itemIndex")),
+            "orderId": data.get("orderId"),
+            "orderDetailsId": data.get("orderDetailsId"),
+            "price": to_numeric(data.get("price")),
+            "productCode": data.get("productCode"),
+            "productId": data.get("productId"),
+            "productName": data.get("productName"),
+            "quantity": to_int(data.get("quantity")),
+            "runningBalanceTotalStock": to_int(data.get("runningBalanceTotalStock")),
+            "skuId": data.get("skuId"),
+            "status": data.get("status"),
+            "storeId": data.get("storeId"),
+            "tagLabels": data.get("tagLabels") if isinstance(data.get("tagLabels"), list) else [],
+            "tags": data.get("tags") if isinstance(data.get("tags"), list) else [],
+            "total": to_numeric(data.get("total")),
+            "uid": data.get("uid"),
+            "updatedAt": ts_to_iso(data.get("updatedAt")),
+            "updatedBy": data.get("updatedBy"),
+            "vat": to_numeric(data.get("vat")),
         }
-        
-        # Debug status field specifically
-        print(f"🔍 Status field debugging - Raw Firestore value: '{data.get('status')}' (type: {type(data.get('status'))})")
+
         print(f"🔍 All Firestore data keys: {list(data.keys())}")
 
         # Clean None values and convert Decimal to JSON-friendly types
@@ -980,38 +984,43 @@ def sync_order_selling_tracking_update(event: firestore_fn.Event[firestore_fn.Do
         print(f"🔍 UPDATE Status field debugging - Raw Firestore value: '{after.get('status')}' (type: {type(after.get('status'))})")
         print(f"🔍 UPDATE All Firestore data keys: {list(after.keys())}")
 
-        payload = {
+        upd_payload = {
             "ordersSellingTrackingId": ost_id,
             "batchNumber": to_int(after.get("batchNumber")),
             "cashierEmail": after.get("cashierEmail"),
             "cashierId": after.get("cashierId"),
             "cashierName": after.get("cashierName"),
+            "category": after.get("category"),
             "companyId": after.get("companyId"),
             "cost": to_numeric(after.get("cost")),
             "createdAt": ts_to_iso(after.get("createdAt")),
             "createdBy": after.get("createdBy"),
-            "orderId": after.get("orderId"),
-            "orderDetailsId": after.get("orderDetailsId"),
-            "status": after.get("status"),
-            "storeId": after.get("storeId"),
-            "uid": after.get("uid"),
-            "isStockTracked": bool(after.get("isStockTracked", False)),
-            "runningBalanceTotalStock": to_int(after.get("runningBalanceTotalStock")),
-            "updatedAt": ts_to_iso(after.get("updatedAt")),
-            "updatedBy": after.get("updatedBy"),
-            "itemIndex": to_int(after.get("itemIndex")),
-            "productId": after.get("productId"),
-            "productName": after.get("productName"),
-            "price": to_numeric(after.get("price")),
-            "quantity": to_int(after.get("quantity")),
             "discount": to_numeric(after.get("discount")),
             "discountType": after.get("discountType"),
-            "vat": to_numeric(after.get("vat")),
-            "total": to_numeric(after.get("total")),
+            "invoiceNumber": after.get("invoiceNumber"),
+            "isStockTracked": bool(after.get("isStockTracked", False)),
             "isVatExempt": bool(after.get("isVatExempt", False)),
+            "itemIndex": to_int(after.get("itemIndex")),
+            "orderId": after.get("orderId"),
+            "orderDetailsId": after.get("orderDetailsId"),
+            "price": to_numeric(after.get("price")),
+            "productCode": after.get("productCode"),
+            "productId": after.get("productId"),
+            "productName": after.get("productName"),
+            "quantity": to_int(after.get("quantity")),
+            "runningBalanceTotalStock": to_int(after.get("runningBalanceTotalStock")),
+            "skuId": after.get("skuId"),
+            "status": after.get("status"),
+            "storeId": after.get("storeId"),
+            "tagLabels": after.get("tagLabels") if isinstance(after.get("tagLabels"), list) else [],
+            "tags": after.get("tags") if isinstance(after.get("tags"), list) else [],
+            "total": to_numeric(after.get("total")),
+            "uid": after.get("uid"),
+            "updatedAt": ts_to_iso(after.get("updatedAt")),
+            "updatedBy": after.get("updatedBy"),
+            "vat": to_numeric(after.get("vat")),
         }
 
-        # Clean payload and convert Decimal to JSON-friendly types
         def clean_payload(obj):
             if isinstance(obj, dict):
                 return {k: clean_payload(v) for k, v in obj.items() if v is not None}
@@ -1021,105 +1030,28 @@ def sync_order_selling_tracking_update(event: firestore_fn.Event[firestore_fn.Do
                 return str(obj)
             return obj
 
-        payload = clean_payload(payload)
+        upd_payload = clean_payload(upd_payload)
 
-        # Build parameterized MERGE query for safe upsert
-        merge_query = f"""
-        MERGE `{table_name}` T
-        USING (
-          SELECT 
-            @ordersSellingTrackingId as ordersSellingTrackingId,
-            @batchNumber as batchNumber,
-                        @cashierEmail as cashierEmail,
-                        @cashierId as cashierId,
-                        @cashierName as cashierName,
-            @companyId as companyId,
-                        SAFE_CAST(@cost AS NUMERIC) as cost,
-            SAFE_CAST(@createdAt AS TIMESTAMP) as createdAt,
-            @createdBy as createdBy,
-            @orderId as orderId,
-            @orderDetailsId as orderDetailsId,
-            @status as status,
-            @storeId as storeId,
-            @uid as uid,
-                        @isStockTracked as isStockTracked,
-                        @runningBalanceTotalStock as runningBalanceTotalStock,
-            SAFE_CAST(@updatedAt AS TIMESTAMP) as updatedAt,
-            @updatedBy as updatedBy,
-            @itemIndex as itemIndex,
-            @productId as productId,
-            @productName as productName,
-            SAFE_CAST(@price AS NUMERIC) as price,
-            @quantity as quantity,
-            SAFE_CAST(@discount AS NUMERIC) as discount,
-            @discountType as discountType,
-            SAFE_CAST(@vat AS NUMERIC) as vat,
-            SAFE_CAST(@total AS NUMERIC) as total,
-            @isVatExempt as isVatExempt
-        ) S
-        ON T.ordersSellingTrackingId = S.ordersSellingTrackingId
-        WHEN MATCHED THEN
-          UPDATE SET 
-            batchNumber = S.batchNumber,
-                        cashierEmail = S.cashierEmail,
-                        cashierId = S.cashierId,
-                        cashierName = S.cashierName,
-            companyId = S.companyId,
-                        cost = S.cost,
-            createdAt = S.createdAt,
-            createdBy = S.createdBy,
-            orderId = S.orderId,
-            orderDetailsId = S.orderDetailsId,
-            status = S.status,
-            storeId = S.storeId,
-            uid = S.uid,
-                        isStockTracked = S.isStockTracked,
-                        runningBalanceTotalStock = S.runningBalanceTotalStock,
-            updatedAt = S.updatedAt,
-            updatedBy = S.updatedBy,
-            itemIndex = S.itemIndex,
-            productId = S.productId,
-            productName = S.productName,
-            price = S.price,
-            quantity = S.quantity,
-            discount = S.discount,
-            discountType = S.discountType,
-            vat = S.vat,
-            total = S.total,
-            isVatExempt = S.isVatExempt
-        WHEN NOT MATCHED THEN
-                    INSERT (ordersSellingTrackingId, batchNumber, cashierEmail, cashierId, cashierName, companyId, cost, createdAt, createdBy, orderId, orderDetailsId, status, storeId, uid, isStockTracked, runningBalanceTotalStock, updatedAt, updatedBy, itemIndex, productId, productName, price, quantity, discount, discountType, vat, total, isVatExempt)
-                    VALUES (S.ordersSellingTrackingId, S.batchNumber, S.cashierEmail, S.cashierId, S.cashierName, S.companyId, S.cost, S.createdAt, S.createdBy, S.orderId, S.orderDetailsId, S.status, S.storeId, S.uid, S.isStockTracked, S.runningBalanceTotalStock, S.updatedAt, S.updatedBy, S.itemIndex, S.productId, S.productName, S.price, S.quantity, S.discount, S.discountType, S.vat, S.total, S.isVatExempt)
-        """
-        
-        # Convert payload to query parameters for MERGE
-        query_params = []
-        for key, value in payload.items():
-            if key in ['createdAt', 'updatedAt'] and value:
-                query_params.append(bigquery.ScalarQueryParameter(key, "STRING", value))
-            elif key in ['price', 'discount', 'vat', 'total', 'cost'] and value is not None:
-                query_params.append(bigquery.ScalarQueryParameter(key, "STRING", str(value)))
-            elif key in ['batchNumber', 'itemIndex', 'quantity', 'runningBalanceTotalStock'] and value is not None:
-                query_params.append(bigquery.ScalarQueryParameter(key, "INT64", int(value)))
-            elif key in ['isVatExempt', 'isStockTracked']:
-                query_params.append(bigquery.ScalarQueryParameter(key, "BOOL", bool(value)))
-            elif key == 'status':
-                # Ensure status is properly converted to string
-                status_value = str(value) if value is not None else None
-                print(f"🔍 MERGE Status parameter: '{status_value}' (original: '{value}')")
-                query_params.append(bigquery.ScalarQueryParameter(key, "STRING", status_value))
-            else:
-                query_params.append(bigquery.ScalarQueryParameter(key, "STRING", str(value) if value is not None else None))
-        
+        # Delete existing row then re-insert (same proven pattern as orders/orderDetails)
         try:
-            job_config = bigquery.QueryJobConfig(query_parameters=query_params)
-            print(f"📤 Executing MERGE for orderSellingTracking {ost_id}")
-            merge_job = client.query(merge_query, job_config=job_config)
-            merge_job.result()
-            print(f"✅ Successfully merged/updated orderSellingTracking {ost_id}")
-        except Exception as me:
-            print(f"❌ Exception during MERGE operation for orderSellingTracking: {me}")
-            print(f"❗ Failed payload: {payload}")
+            del_query = f"DELETE FROM `{table_name}` WHERE ordersSellingTrackingId = @ostId"
+            del_params = [bigquery.ScalarQueryParameter("ostId", "STRING", ost_id)]
+            del_job = client.query(del_query, job_config=bigquery.QueryJobConfig(query_parameters=del_params))
+            del_job.result()
+            print(f"🗑️ Removed existing OST row {ost_id} (if any)")
+        except Exception as de:
+            print(f"⚠️ Warning deleting existing OST row: {de}")
+
+        try:
+            table = client.get_table(table_name)
+            print(f"📤 Inserting updated OST payload into {table_name}")
+            errors = client.insert_rows_json(table, [upd_payload])
+            if errors:
+                print(f"❌ BigQuery update insert failed: {errors}")
+            else:
+                print(f"✅ BigQuery update successful for orderSellingTracking {ost_id}")
+        except Exception as ie:
+            print(f"❌ Exception inserting updated OST to BigQuery: {ie}")
 
     except Exception as e:
         print(f"❌ Unexpected error syncing updated orderSellingTracking to BigQuery: {e}")
