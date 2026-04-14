@@ -22,7 +22,7 @@ from bigquery_triggers import (
 	sync_order_selling_tracking_delete,
 )
 # app_logs endpoint removed; previously provided an HTTP logging endpoint
-# Removed scheduled reconciliation and PayPal endpoints per feature cleanup
+from paypal_endpoints import paypal_client_config, paypal_create_order, paypal_capture_order
 from product_inventory_api import get_product_inventory_bq
 
 # Products APIs (Firestore)  
@@ -60,4 +60,6 @@ except Exception as e:
 # - test_auth_basic: Test basic authentication
 # - test_auth_store: Test store access authentication  
 # - reconcile_daily: REMOVED
-# - paypal_create_order / paypal_capture_order: REMOVED
+# - paypal_client_config: Returns safe PayPal client configuration for authenticated users
+# - paypal_create_order: Create a PayPal order for an authenticated Firebase user
+# - paypal_capture_order: Capture a PayPal order for an authenticated Firebase user

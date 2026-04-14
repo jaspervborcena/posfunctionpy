@@ -21,8 +21,8 @@ def _get_environment():
         project_id = None
 
     if not project_id:
-        # Fail-safe: do not silently point to PROD. Explicitly default but log.
-        default = 'jasperpos-1dfd5'
+        # Fail-safe: default to DEV so sandbox/test systems are used unless prod is explicit.
+        default = 'jasperpos-dev'
         print(f"WARNING: Unable to determine GCP project from environment or ADC; defaulting to '{default}'")
         project_id = default
 
@@ -67,6 +67,21 @@ BIGQUERY_LOCATION = "asia-east1"  # Same region as your Firebase Functions
 
 # Firebase Configuration
 FIREBASE_REGION = "asia-east1"
+
+def is_dev_environment():
+    """Public helper for dev/prod environment checks."""
+    return _is_dev()
+
+def get_cloud_function_base_url():
+    """Get the deployed HTTPS base URL for the current Firebase project."""
+    return f"https://{FIREBASE_REGION}-{get_bigquery_project_id()}.cloudfunctions.net"
+
+def get_paypal_base_url():
+    """Get the PayPal API base URL for the current environment."""
+    explicit = os.environ.get('PAYPAL_BASE')
+    if explicit:
+        return explicit
+    return "https://api-m.sandbox.paypal.com" if _is_dev() else "https://api-m.paypal.com"
 
 # Log current environment for debugging (only log on first access)
 _logged = False

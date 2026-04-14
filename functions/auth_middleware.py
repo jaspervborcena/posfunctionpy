@@ -101,6 +101,13 @@ def verify_user_auth(req):
         print(f"🏢 Company: {company_id}")
         print(f"🏪 Store: {store_id}")
         print(f"👤 Role: {role_id}")
+
+        # Expose verified Firebase Auth identity details to downstream handlers.
+        user_data.setdefault('uid', uid)
+        if email:
+            user_data.setdefault('email', email)
+        user_data['auth_uid'] = uid
+        user_data['auth_email'] = email
         
         return user_data, None
         
@@ -203,6 +210,7 @@ def require_auth(func):
         
         # Add user data to request object
         req.user = user_data
+        req.user_info = user_data
         return func(req)
     
     return wrapper
