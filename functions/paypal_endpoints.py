@@ -15,11 +15,29 @@ from config import get_cloud_function_base_url, get_paypal_base_url, is_dev_envi
 PAYPAL_BASE = get_paypal_base_url()
 
 
+def _cors_headers(origin: str | None, methods: str = "GET, POST, OPTIONS") -> Dict[str, str]:
+    allow_origin = origin or "*"
+    return {
+        "Content-Type": "application/json",
+        "Access-Control-Allow-Origin": allow_origin,
+        "Access-Control-Allow-Methods": methods,
+        "Access-Control-Allow-Headers": "Content-Type, Authorization",
+        "Access-Control-Max-Age": "3600",
+        "Vary": "Origin",
+    }
+
+
+def _preflight_response(req: https_fn.Request, methods: str) -> https_fn.Response:
+    origin = req.headers.get("Origin") if req.headers else None
+    return https_fn.Response("", status=204, headers=_cors_headers(origin, methods))
+
+
 def _json_response(payload: Dict[str, Any], status: int = 200) -> https_fn.Response:
+    origin = payload.pop("_origin", None)
     return https_fn.Response(
         json.dumps(payload),
         status=status,
-        headers={"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"},
+        headers=_cors_headers(origin),
     )
 
 
@@ -38,6 +56,18 @@ def _get_paypal_credentials() -> Dict[str, str]:
             f"Missing PayPal {mode} credentials. Set the environment variables for this deployment."
         )
     return {"client_id": client_id, "client_secret": client_secret}
+
+
+def _get_paypal_client_id() -> str:
+    if is_dev_environment():
+        client_id = os.getenv("PAYPAL_CLIENT_ID_SANDBOX") or os.getenv("PAYPAL_CLIENT_ID")
+    else:
+        client_id = os.getenv("PAYPAL_CLIENT_ID_LIVE") or os.getenv("PAYPAL_CLIENT_ID")
+
+    if not client_id:
+        raise RuntimeError("PayPal client configuration is missing")
+
+    return client_id
 
 
 def _get_access_token() -> str:
@@ -99,19 +129,39 @@ def _safe_json(resp: requests.Response) -> Dict[str, Any]:
         return {"raw": resp.text}
 
 
-@https_fn.on_request(cors=True, region="asia-east1")
+def _get_capture_status(payload: Dict[str, Any]) -> str:
+    purchase_units = payload.get("purchase_units")
+    if isinstance(purchase_units, list) and purchase_units:
+        first_unit = purchase_units[0]
+        if isinstance(first_unit, dict):
+            payments = first_unit.get("payments")
+            if isinstance(payments, dict):
+                captures = payments.get("captures")
+                if isinstance(captures, list) and captures:
+                    first_capture = captures[0]
+                    if isinstance(first_capture, dict):
+                        status = first_capture.get("status")
+                        if status:
+                            return str(status).upper()
+
+    status = payload.get("status")
+    return str(status).upper() if status else ""
+
+
+@https_fn.on_request(region="asia-east1")
 @require_auth
 def paypal_client_config(req: https_fn.Request) -> https_fn.Response:
     """Return the safe PayPal client config for authenticated users."""
     if req.method == "OPTIONS":
-        return https_fn.Response("", status=204)
+        return _preflight_response(req, "GET, OPTIONS")
 
     if req.method != "GET":
-        return _json_response({"error": "Method not allowed"}, 405)
+        return _json_response({"error": "Method not allowed", "_origin": req.headers.get("Origin")}, 405)
 
-    client_id = os.getenv("PAYPAL_CLIENT_ID")
-    if not client_id:
-        return _json_response({"error": "PayPal client configuration is missing"}, 500)
+    try:
+        client_id = _get_paypal_client_id()
+    except RuntimeError as exc:
+        return _json_response({"error": str(exc), "_origin": req.headers.get("Origin")}, 500)
 
     function_base_url = get_cloud_function_base_url()
 
@@ -124,19 +174,20 @@ def paypal_client_config(req: https_fn.Request) -> https_fn.Response:
             "functionBaseUrl": function_base_url,
             "createOrderUrl": f"{function_base_url}/paypal_create_order",
             "captureOrderUrl": f"{function_base_url}/paypal_capture_order",
+            "_origin": req.headers.get("Origin"),
         }
     )
 
 
-@https_fn.on_request(cors=True, region="asia-east1")
+@https_fn.on_request(region="asia-east1")
 @require_auth
 def paypal_create_order(req: https_fn.Request) -> https_fn.Response:
     """Create a PayPal order for an authenticated Firebase user."""
     if req.method == "OPTIONS":
-        return https_fn.Response("", status=204)
+        return _preflight_response(req, "POST, OPTIONS")
 
     if req.method != "POST":
-        return _json_response({"error": "Method not allowed"}, 405)
+        return _json_response({"error": "Method not allowed", "_origin": req.headers.get("Origin")}, 405)
 
     try:
         body = _parse_json(req)
@@ -173,32 +224,33 @@ def paypal_create_order(req: https_fn.Request) -> https_fn.Response:
         data = _safe_json(resp)
 
         if not resp.ok:
-            return _json_response({"error": "create-order-failed", "details": data}, 500)
+            return _json_response({"error": "create-order-failed", "details": data, "_origin": req.headers.get("Origin")}, 500)
 
+        data["_origin"] = req.headers.get("Origin")
         return _json_response(data)
 
     except ValueError as exc:
-        return _json_response({"error": str(exc)}, 400)
+        return _json_response({"error": str(exc), "_origin": req.headers.get("Origin")}, 400)
     except Exception as exc:
         print(f"create-order error: {exc}")
-        return _json_response({"error": str(exc) or "server-error"}, 500)
+        return _json_response({"error": str(exc) or "server-error", "_origin": req.headers.get("Origin")}, 500)
 
 
-@https_fn.on_request(cors=True, region="asia-east1")
+@https_fn.on_request(region="asia-east1")
 @require_auth
 def paypal_capture_order(req: https_fn.Request) -> https_fn.Response:
     """Capture a PayPal order for an authenticated Firebase user."""
     if req.method == "OPTIONS":
-        return https_fn.Response("", status=204)
+        return _preflight_response(req, "POST, OPTIONS")
 
     if req.method != "POST":
-        return _json_response({"error": "Method not allowed"}, 405)
+        return _json_response({"error": "Method not allowed", "_origin": req.headers.get("Origin")}, 405)
 
     try:
         body = _parse_json(req)
         order_id = body.get("orderId")
         if not order_id:
-            return _json_response({"error": "Missing orderId"}, 400)
+            return _json_response({"error": "Missing orderId", "_origin": req.headers.get("Origin")}, 400)
 
         access_token = _get_access_token()
         resp = requests.post(
@@ -212,11 +264,24 @@ def paypal_capture_order(req: https_fn.Request) -> https_fn.Response:
         data = _safe_json(resp)
 
         if not resp.ok:
-            return _json_response({"error": "capture-order-failed", "details": data}, 500)
+            return _json_response({"error": "capture-order-failed", "details": data, "_origin": req.headers.get("Origin")}, 500)
 
+        capture_status = _get_capture_status(data)
+        if capture_status != "COMPLETED":
+            return _json_response(
+                {
+                    "error": "capture-not-completed",
+                    "status": capture_status or "UNKNOWN",
+                    "details": data,
+                    "_origin": req.headers.get("Origin"),
+                },
+                402,
+            )
+
+        data["_origin"] = req.headers.get("Origin")
         return _json_response(data)
 
     except Exception as exc:
         print(f"capture-order error: {exc}")
-        return _json_response({"error": str(exc) or "server-error"}, 500)
+        return _json_response({"error": str(exc) or "server-error", "_origin": req.headers.get("Origin")}, 500)
 
