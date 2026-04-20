@@ -10,9 +10,12 @@ import requests
 from firebase_functions import https_fn
 
 from auth_middleware import require_auth
-from config import get_cloud_function_base_url, get_paypal_base_url, is_dev_environment
+
+from config import get_cloud_function_base_url, get_paypal_base_url, is_dev_environment, _get_environment
 
 PAYPAL_BASE = get_paypal_base_url()
+print(f"[PayPal Debug] PAYPAL_BASE at import: {PAYPAL_BASE}")
+print(f"[PayPal Debug] Detected environment: {_get_environment()}")
 
 
 def _cors_headers(origin: str | None, methods: str = "GET, POST, OPTIONS") -> Dict[str, str]:
@@ -47,14 +50,15 @@ def _get_paypal_credentials() -> Dict[str, str]:
         client_secret = os.getenv("PAYPAL_CLIENT_SECRET_SANDBOX") or os.getenv("PAYPAL_CLIENT_SECRET")
         mode = "sandbox"
     else:
-        client_id = os.getenv("PAYPAL_CLIENT_ID_LIVE") or os.getenv("PAYPAL_CLIENT_ID")
-        client_secret = os.getenv("PAYPAL_CLIENT_SECRET_LIVE") or os.getenv("PAYPAL_CLIENT_SECRET")
+        client_id = os.getenv("PAYPAL_CLIENT_ID_LIVE")
+        client_secret = os.getenv("PAYPAL_CLIENT_SECRET_LIVE")
         mode = "live"
-
-    if not client_id or not client_secret:
-        raise RuntimeError(
-            f"Missing PayPal {mode} credentials. Set the environment variables for this deployment."
-        )
+        # Fail fast if live credentials are missing in prod
+        if not client_id or not client_secret:
+            raise RuntimeError(
+                "Missing PayPal LIVE credentials. Set PAYPAL_CLIENT_ID_LIVE and PAYPAL_CLIENT_SECRET_LIVE in production."
+            )
+    print(f"[PayPal Config] Using {mode} credentials. Client ID present: {bool(client_id)}")
     return {"client_id": client_id, "client_secret": client_secret}
 
 
@@ -182,6 +186,8 @@ def paypal_client_config(req: https_fn.Request) -> https_fn.Response:
 @https_fn.on_request(region="asia-east1")
 @require_auth
 def paypal_create_order(req: https_fn.Request) -> https_fn.Response:
+    # Log environment and PayPal endpoint at every call
+    print(f"[PayPal Debug] Function called. PAYPAL_BASE: {PAYPAL_BASE}, ENV: {_get_environment()}")
     """Create a PayPal order for an authenticated Firebase user."""
     if req.method == "OPTIONS":
         return _preflight_response(req, "POST, OPTIONS")
@@ -239,6 +245,8 @@ def paypal_create_order(req: https_fn.Request) -> https_fn.Response:
 @https_fn.on_request(region="asia-east1")
 @require_auth
 def paypal_capture_order(req: https_fn.Request) -> https_fn.Response:
+    # Log environment and PayPal endpoint at every call
+    print(f"[PayPal Debug] Function called. PAYPAL_BASE: {PAYPAL_BASE}, ENV: {_get_environment()}")
     """Capture a PayPal order for an authenticated Firebase user."""
     if req.method == "OPTIONS":
         return _preflight_response(req, "POST, OPTIONS")

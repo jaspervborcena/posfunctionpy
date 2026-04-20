@@ -12,7 +12,7 @@ def _get_environment():
         return explicit
 
     # K_SERVICE is set by Cloud Run/Functions, GCP_PROJECT / GOOGLE_CLOUD_PROJECT are common env vars
-    project_id = os.environ.get('GCP_PROJECT') or os.environ.get('GOOGLE_CLOUD_PROJECT')
+    project_id = os.environ.get('GCP_PROJECT') or os.environ.get('GOOGLE_CLOUD_PROJECT') or os.environ.get('GCLOUD_PROJECT')
     # Do NOT fall back to Application Default Credentials for project discovery here.
     # Relying on ADC at runtime can accidentally pick up a service-account.json file
     # that exists in the source tree (for example a prod key) and cause the
@@ -80,8 +80,11 @@ def get_paypal_base_url():
     """Get the PayPal API base URL for the current environment."""
     explicit = os.environ.get('PAYPAL_BASE')
     if explicit:
+        print(f"[PayPal Config] Using explicit PAYPAL_BASE: {explicit}")
         return explicit
-    return "https://api-m.sandbox.paypal.com" if _is_dev() else "https://api-m.paypal.com"
+    base_url = "https://api-m.sandbox.paypal.com" if _is_dev() else "https://api-m.paypal.com"
+    print(f"[PayPal Config] Using base URL: {base_url} (env: {'DEV' if _is_dev() else 'PROD'})")
+    return base_url
 
 # Log current environment for debugging (only log on first access)
 _logged = False
