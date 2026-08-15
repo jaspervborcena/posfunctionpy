@@ -1,7 +1,8 @@
 from firebase_functions import firestore_fn
+from firebase_admin import firestore as admin_firestore
 from datetime import datetime
 import json
-from datetime import timezone, timedelta
+from datetime import timezone
 from decimal import Decimal, InvalidOperation
 
 
@@ -97,9 +98,245 @@ def normalize_string_list(values):
         return []
     return [str(v) for v in values if v is not None]
 
-# Import configuration 
-from bq_helpers import build_product_payload
 
+def clean_payload(obj):
+    """Recursively remove None values and normalize DECIMALs for BigQuery payloads."""
+    if isinstance(obj, dict):
+        return {k: clean_payload(v) for k, v in obj.items() if v is not None}
+    if isinstance(obj, list):
+        return [clean_payload(v) for v in obj]
+    if isinstance(obj, Decimal):
+        return str(obj)
+    return obj
+
+
+def to_int(v):
+    try:
+        return int(v) if v is not None else None
+    except Exception:
+        return None
+
+
+def to_numeric(v):
+    try:
+        if v is None:
+            return None
+        if isinstance(v, Decimal):
+            return v
+        return Decimal(str(v))
+    except (InvalidOperation, ValueError, TypeError):
+        return None
+
+
+def ts_to_datetime(val):
+    """Convert a variety of timestamp shapes into a Python datetime."""
+    if val is None:
+        return None
+    if isinstance(val, datetime):
+        return val
+    if hasattr(val, 'to_datetime'):
+        try:
+            return val.to_datetime()
+        except Exception:
+            pass
+    if hasattr(val, 'ToDatetime'):
+        try:
+            return val.ToDatetime()
+        except Exception:
+            pass
+    if isinstance(val, dict):
+        if 'seconds' in val:
+            secs = float(val.get('seconds', 0))
+            nanos = float(val.get('nanos', 0))
+            return datetime.fromtimestamp(secs + nanos / 1e9)
+        if '_seconds' in val:
+            secs = float(val.get('_seconds', 0))
+            nanos = float(val.get('_nanoseconds', 0))
+            return datetime.fromtimestamp(secs + nanos / 1e9)
+    if isinstance(val, (int, float)):
+        v = float(val)
+        if v > 1e12:
+            return datetime.fromtimestamp(v / 1000.0)
+        return datetime.fromtimestamp(v)
+    try:
+        return datetime.fromisoformat(str(val))
+    except Exception:
+        return None
+
+
+LOYALTY_EARN_STATUSES = {"active", "completed", "paid"}
+LOYALTY_CANCEL_STATUSES = {"cancelled", "canceled", "void"}
+LOYALTY_REDEEM_STATUSES = {"redeemed", "redeem"}
+LOYALTY_EXPIRE_STATUSES = {"expired", "expire"}
+POINTS_PER_ORDER = 1
+REDEEM_POINTS = 100
+
+
+def get_loyalty_adjustment_for_status(status):
+    if not status:
+        return None, None
+    key = str(status).strip().lower()
+    if key in LOYALTY_EARN_STATUSES:
+        return POINTS_PER_ORDER, 'earn'
+    if key in LOYALTY_CANCEL_STATUSES:
+        return -POINTS_PER_ORDER, 'adjustment'
+    if key in LOYALTY_REDEEM_STATUSES:
+        return -REDEEM_POINTS, 'redeem'
+    if key in LOYALTY_EXPIRE_STATUSES:
+        return -REDEEM_POINTS, 'expire'
+    return None, None
+
+
+def get_transaction_status_from_order_status(status):
+    if not status:
+        return 'processed'
+    key = str(status).strip().lower()
+    if key == 'pending':
+        return 'pending'
+    if key in LOYALTY_CANCEL_STATUSES:
+        return 'reversed'
+    return 'processed'
+
+
+def get_current_balance(db, customer_uid):
+    if not customer_uid:
+        return 0
+    try:
+        query = (
+            db.collection('balanceHistory')
+              .where('customerUid', '==', customer_uid)
+              .order_by('timestamp', direction=admin_firestore.Query.DESCENDING)
+              .limit(1)
+        )
+        docs = list(query.stream())
+        if docs:
+            return docs[0].to_dict().get('newBalance', 0) or 0
+    except Exception as e:
+        print(f"⚠️ Could not read existing balance for {customer_uid}: {e}")
+    return 0
+
+
+def write_balance_history(db, customer_uid, invoice_number, change, reason, transaction_id, timestamp, new_balance):
+    try:
+        payload = {
+            'customerUid': customer_uid,
+            'invoiceNumber': invoice_number,
+            'change': change,
+            'newBalance': new_balance,
+            'reason': reason,
+            'transactionId': transaction_id,
+            'timestamp': timestamp
+        }
+        doc_id = f"balance_{transaction_id or invoice_number}_{int(timestamp.timestamp() * 1000)}"
+        db.collection('balanceHistory').document(doc_id).set(payload)
+        print(f"✅ Wrote balanceHistory {doc_id} for customer {customer_uid}: {payload}")
+        return doc_id
+    except Exception as e:
+        print(f"❌ Failed to write balanceHistory for {customer_uid}: {e}")
+        return None
+
+
+def write_transaction_record(db, order_doc_id, transaction_id, customer_uid, invoice_number, amount, points_earned, timestamp, status):
+    try:
+        payload = {
+            'transactionId': transaction_id,
+            'customerUid': customer_uid,
+            'invoiceNumber': invoice_number,
+            'amount': float(amount or 0),
+            'pointsEarned': int(points_earned),
+            'timestamp': timestamp,
+            'status': status
+        }
+        txn_ref = db.collection('transactions').document(order_doc_id)
+        if txn_ref.get().exists:
+            txn_ref.update({
+                'status': status,
+                'pointsEarned': int(points_earned),
+                'amount': float(amount or 0),
+                'timestamp': timestamp
+            })
+            print(f"✅ Updated transaction record for order {order_doc_id}: {payload}")
+        else:
+            txn_ref.set(payload)
+            print(f"✅ Created transaction record for order {order_doc_id}: {payload}")
+        return txn_ref.id
+    except Exception as e:
+        print(f"❌ Failed to write transaction for order {order_doc_id}: {e}")
+        return None
+
+
+def process_order_loyalty(order_id, data, is_update=False, before_data=None):
+    customer_uid = None
+    if isinstance(data.get('customerInfo'), dict):
+        customer_uid = data.get('customerInfo', {}).get('customerUid')
+    if not customer_uid:
+        customer_uid = data.get('uid')
+    if not customer_uid:
+        print(f"⚠️ No customerUid or uid found for order {order_id}; skipping loyalty update")
+        return
+
+    status = data.get('status', 'active')
+    after_points, after_reason = get_loyalty_adjustment_for_status(status)
+    before_points = None
+    before_reason = None
+    if is_update and before_data is not None:
+        before_status = before_data.get('status')
+        before_points, before_reason = get_loyalty_adjustment_for_status(before_status)
+        if before_points == after_points and before_reason == after_reason:
+            print(f"ℹ️ Order {order_id} loyalty status unchanged ({status}); no loyalty update")
+            return
+
+    if after_points is None:
+        if before_points is None:
+            print(f"ℹ️ Order {order_id} status '{status}' does not require loyalty update")
+            return
+        # If the order was previously a loyalty event and now is not, write an adjustment to remove the old effect.
+        after_points = 0
+        after_reason = 'adjustment'
+
+    invoice_number = data.get('invoiceNumber') or order_id
+    timestamp = ts_to_datetime(data.get('updatedAt') or data.get('createdAt')) or datetime.utcnow()
+    transaction_id = invoice_number
+    current_balance = get_current_balance(admin_firestore.client(), customer_uid)
+    new_balance = current_balance + after_points
+
+    write_transaction_record(
+        admin_firestore.client(),
+        order_id,
+        transaction_id,
+        customer_uid,
+        invoice_number,
+        data.get('netAmount') or data.get('totalAmount') or 0,
+        after_points,
+        timestamp,
+        get_transaction_status_from_order_status(status)
+    )
+
+    if is_update and before_points is not None and after_points == 0:
+        adjustment_change = -before_points
+        write_balance_history(
+            admin_firestore.client(),
+            customer_uid,
+            invoice_number,
+            adjustment_change,
+            after_reason,
+            transaction_id,
+            timestamp,
+            new_balance
+        )
+    else:
+        write_balance_history(
+            admin_firestore.client(),
+            customer_uid,
+            invoice_number,
+            after_points,
+            after_reason,
+            transaction_id,
+            timestamp,
+            new_balance
+        )
+
+# Import configuration 
 try:
     from google.cloud import bigquery
     BIGQUERY_AVAILABLE = True
@@ -162,7 +399,7 @@ def sync_order_to_bigquery(event: firestore_fn.Event[firestore_fn.DocumentSnapsh
             "createdBy": data.get("createdBy"),
             "customerInfo": {
                 "address": data.get("customerInfo", {}).get("address") if data.get("customerInfo") else None,
-                "customerId": data.get("customerInfo", {}).get("customerId") if data.get("customerInfo") else None,
+                "customerUid": data.get("customerInfo", {}).get("customerUid") if data.get("customerInfo") else None,
                 "fullName": data.get("customerInfo", {}).get("fullName") if data.get("customerInfo") else None,
                 "tin": data.get("customerInfo", {}).get("tin") if data.get("customerInfo") else None
             } if data.get("customerInfo") else None,
@@ -193,16 +430,6 @@ def sync_order_to_bigquery(event: firestore_fn.Event[firestore_fn.DocumentSnapsh
             "zeroRatedSales": float(data.get("zeroRatedSales", 0))
         }
         
-        # Remove null values and convert Decimal to JSON-friendly types
-        def clean_payload(obj):
-            if isinstance(obj, dict):
-                return {k: clean_payload(v) for k, v in obj.items() if v is not None}
-            if isinstance(obj, list):
-                return [clean_payload(v) for v in obj]
-            if isinstance(obj, Decimal):
-                return str(obj)
-            return obj
-        
         payload = clean_payload(payload)
         
         # Add the Firestore document ID as a field
@@ -219,6 +446,7 @@ def sync_order_to_bigquery(event: firestore_fn.Event[firestore_fn.DocumentSnapsh
                 print(f"❌ BigQuery insert failed with errors: {errors}")
             else:
                 print(f"✅ BigQuery insert successful for order {order_id}")
+                process_order_loyalty(order_id, data, is_update=False)
         except Exception as ie:
             print(f"❌ Exception while inserting order to BigQuery: {ie}")
 
@@ -294,7 +522,7 @@ def sync_order_to_bigquery_update(event: firestore_fn.Event[firestore_fn.Documen
             "createdBy": after.get("createdBy"),
             "customerInfo": {
                 "address": after.get("customerInfo", {}).get("address") if after.get("customerInfo") else None,
-                "customerId": after.get("customerInfo", {}).get("customerId") if after.get("customerInfo") else None,
+                "customerUid": after.get("customerInfo", {}).get("customerUid") if after.get("customerInfo") else None,
                 "fullName": after.get("customerInfo", {}).get("fullName") if after.get("customerInfo") else None,
                 "tin": after.get("customerInfo", {}).get("tin") if after.get("customerInfo") else None
             } if after.get("customerInfo") else None,
@@ -325,14 +553,7 @@ def sync_order_to_bigquery_update(event: firestore_fn.Event[firestore_fn.Documen
             "zeroRatedSales": float(after.get("zeroRatedSales", 0)) if after.get("zeroRatedSales") is not None else None
         }
 
-        def _clean(obj):
-            if isinstance(obj, dict):
-                return {k: _clean(v) for k, v in obj.items() if v is not None}
-            if isinstance(obj, list):
-                return [_clean(v) for v in obj]
-            return obj
-
-        upd_payload = _clean(upd_payload)
+        upd_payload = clean_payload(upd_payload)
         print(f"🧹 Updated order payload: {upd_payload}")
 
         try:
@@ -344,6 +565,7 @@ def sync_order_to_bigquery_update(event: firestore_fn.Event[firestore_fn.Documen
                 print(f"❗ Failed payload: {upd_payload}")
             else:
                 print(f"✅ BigQuery update (re-insert) successful for order {order_id}")
+                process_order_loyalty(order_id, after, is_update=True, before_data=event.data.before.to_dict())
         except Exception as ie:
             print(f"❌ Exception while inserting updated order to BigQuery: {ie}")
 
@@ -579,16 +801,6 @@ def sync_products_to_bigquery(event: firestore_fn.Event[firestore_fn.DocumentSna
             "updatedBy": data.get("updatedBy")
         }
         
-        # Remove null values and convert Decimal to JSON-friendly types
-        def clean_payload(obj):
-            if isinstance(obj, dict):
-                return {k: clean_payload(v) for k, v in obj.items() if v is not None}
-            if isinstance(obj, list):
-                return [clean_payload(v) for v in obj]
-            if isinstance(obj, Decimal):
-                return str(obj)
-            return obj
-        
         payload = clean_payload(payload)
         
         # Add the Firestore document ID as a field
@@ -706,8 +918,9 @@ def sync_products_to_bigquery_update(event: firestore_fn.Event[firestore_fn.Docu
 
         client = get_bigquery_client()
         
+        table_name = get_bigquery_table_name('products')
         # Verify the product exists in BigQuery before updating
-        check_query = f"SELECT COUNT(*) as count FROM `{BIGQUERY_PRODUCTS_TABLE}` WHERE productId = @productId"
+        check_query = f"SELECT COUNT(*) as count FROM `{table_name}` WHERE productId = @productId"
         check_params = [bigquery.ScalarQueryParameter("productId", "STRING", product_id)]
         check_job_config = bigquery.QueryJobConfig(query_parameters=check_params)
         check_job = client.query(check_query, job_config=check_job_config)
@@ -721,7 +934,7 @@ def sync_products_to_bigquery_update(event: firestore_fn.Event[firestore_fn.Docu
         # Use MERGE to upsert the updated product (idempotent)
         try:
             merge_query = f"""
-            MERGE `{BIGQUERY_PRODUCTS_TABLE}` T
+            MERGE `{table_name}` T
             USING (SELECT @productId AS productId) S
             ON T.productId = S.productId
             WHEN MATCHED THEN
@@ -813,7 +1026,8 @@ def sync_products_to_bigquery_delete(event: firestore_fn.Event[firestore_fn.Docu
     try:
         product_id = event.params.get("productId")
         client = get_bigquery_client()
-        delete_query = f"DELETE FROM `{BIGQUERY_PRODUCTS_TABLE}` WHERE productId = @productId"
+        table_name = get_bigquery_table_name('products')
+        delete_query = f"DELETE FROM `{table_name}` WHERE productId = @productId"
         params = [bigquery.ScalarQueryParameter("productId", "STRING", product_id)]
         job_config = bigquery.QueryJobConfig(query_parameters=params)
         job = client.query(delete_query, job_config=job_config)
@@ -856,23 +1070,6 @@ def sync_order_selling_tracking_to_bigquery(event: firestore_fn.Event[firestore_
 
         # Build payload with updated field schema to match new Firestore structure
         # Match BigQuery types: INT64 for batchNumber/quantity/itemIndex; NUMERIC for price/discount/vat/total
-        def to_int(v):
-            try:
-                return int(v) if v is not None else None
-            except Exception:
-                return None
-
-        def to_numeric(v):
-            try:
-                if v is None:
-                    return None
-                # Accept Decimal, int, float, or numeric string
-                if isinstance(v, Decimal):
-                    return v
-                return Decimal(str(v))
-            except (InvalidOperation, ValueError, TypeError):
-                return None
-
         payload = {
             "ordersSellingTrackingId": ost_id,
             "batchNumber": to_int(data.get("batchNumber")),
@@ -911,16 +1108,6 @@ def sync_order_selling_tracking_to_bigquery(event: firestore_fn.Event[firestore_
         }
 
         print(f"🔍 All Firestore data keys: {list(data.keys())}")
-
-        # Clean None values and convert Decimal to JSON-friendly types
-        def clean_payload(obj):
-            if isinstance(obj, dict):
-                return {k: clean_payload(v) for k, v in obj.items() if v is not None}
-            if isinstance(obj, list):
-                return [clean_payload(v) for v in obj]
-            if isinstance(obj, Decimal):
-                return str(obj)
-            return obj
 
         payload = clean_payload(payload)
 
@@ -964,22 +1151,6 @@ def sync_order_selling_tracking_update(event: firestore_fn.Event[firestore_fn.Do
         # This ensures atomicity and handles both insert and update cases safely
 
         # Recreate payload from the updated document with new schema
-        def to_int(v):
-            try:
-                return int(v) if v is not None else None
-            except Exception:
-                return None
-
-        def to_numeric(v):
-            try:
-                if v is None:
-                    return None
-                if isinstance(v, Decimal):
-                    return v
-                return Decimal(str(v))
-            except (InvalidOperation, ValueError, TypeError):
-                return None
-                
         # Debug status field specifically
         print(f"🔍 UPDATE Status field debugging - Raw Firestore value: '{after.get('status')}' (type: {type(after.get('status'))})")
         print(f"🔍 UPDATE All Firestore data keys: {list(after.keys())}")
@@ -1020,15 +1191,6 @@ def sync_order_selling_tracking_update(event: firestore_fn.Event[firestore_fn.Do
             "updatedBy": after.get("updatedBy"),
             "vat": to_numeric(after.get("vat")),
         }
-
-        def clean_payload(obj):
-            if isinstance(obj, dict):
-                return {k: clean_payload(v) for k, v in obj.items() if v is not None}
-            if isinstance(obj, list):
-                return [clean_payload(v) for v in obj]
-            if isinstance(obj, Decimal):
-                return str(obj)
-            return obj
 
         upd_payload = clean_payload(upd_payload)
 
