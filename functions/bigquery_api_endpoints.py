@@ -249,7 +249,7 @@ def get_orders_bq(req: https_fn.Request) -> https_fn.Response:
 @https_fn.on_request(region="asia-east1")
 @require_auth
 def get_sales_summary_bq(req: https_fn.Request) -> https_fn.Response:
-    """Get sales summary with aggregated data from BigQuery - defaults to today"""
+    """Get total sales for a store over an inclusive createdAt date range."""
     
     # Handle CORS for web requests
     if req.method == 'OPTIONS':
@@ -261,88 +261,98 @@ def get_sales_summary_bq(req: https_fn.Request) -> https_fn.Response:
         }
         return https_fn.Response('', status=204, headers=headers)
     
-    # Get parameters from query string
-    date_param = req.args.get('date')  # Optional, format: YYYYMMDD or YYYY-MM-DD
-    store_id = req.args.get('storeId')  # Optional
-    
-    # Default to today if no date provided
-    if date_param:
-        target_date = parse_date_string(date_param)
-        if not target_date:
-            return https_fn.Response(
-                json.dumps({"error": "Invalid date format. Use YYYYMMDD or YYYY-MM-DD"}),
-                status=400,
-                headers=DEFAULT_HEADERS
-            )
-    else:
-        target_date = datetime.now()
-    
-    # Validate store access if storeId is provided
-    if store_id:
-        from auth_middleware import check_store_access, extract_user_permissions
-        has_access, access_error = check_store_access(req.user, store_id)
-        if not has_access:
-            perms = extract_user_permissions(req.user)
-            return https_fn.Response(
-                json.dumps({
-                    "success": False,
-                    "error": "Access denied",
-                    "message": access_error,
-                    "requested_store": store_id,
-                    "user_store": perms.get('storeId')
-                }),
-                status=403,
-                headers=DEFAULT_HEADERS
-            )
+    store_id = req.args.get('storeId')
+    from_date_param = req.args.get('from')
+    to_date_param = req.args.get('to')
+
+    if not store_id:
+        return https_fn.Response(
+            json.dumps({"error": "storeId parameter is required"}),
+            status=400,
+            headers=DEFAULT_HEADERS
+        )
+
+    if not from_date_param or not to_date_param:
+        return https_fn.Response(
+            json.dumps({"error": "from and to parameters are required (format YYYYMMDD or YYYY-MM-DD)"}),
+            status=400,
+            headers=DEFAULT_HEADERS
+        )
+
+    from_date = parse_date_string(from_date_param)
+    to_date = parse_date_string(to_date_param)
+    if not from_date or not to_date:
+        return https_fn.Response(
+            json.dumps({"error": "Invalid date format. Use YYYYMMDD or YYYY-MM-DD"}),
+            status=400,
+            headers=DEFAULT_HEADERS
+        )
+
+    if from_date > to_date:
+        return https_fn.Response(
+            json.dumps({"error": "from date cannot be later than to date"}),
+            status=400,
+            headers=DEFAULT_HEADERS
+        )
+
+    from auth_middleware import check_store_access, extract_user_permissions
+    has_access, access_error = check_store_access(req.user, store_id)
+    if not has_access:
+        perms = extract_user_permissions(req.user)
+        return https_fn.Response(
+            json.dumps({
+                "success": False,
+                "error": "Access denied",
+                "message": access_error,
+                "requested_store": store_id,
+                "user_store": perms.get('storeId')
+            }),
+            status=403,
+            headers=DEFAULT_HEADERS
+        )
     
     try:
         client = get_bigquery_client()
         
-        # Build query parameters list
+        start_timestamp = from_date.replace(hour=0, minute=0, second=0, microsecond=0)
+        end_timestamp = to_date.replace(hour=23, minute=59, second=59, microsecond=999999)
         query_parameters = [
-            bigquery.ScalarQueryParameter("target_date", "DATE", target_date.date())
+            bigquery.ScalarQueryParameter("store_id", "STRING", store_id),
+            bigquery.ScalarQueryParameter("status", "STRING", "completed"),
+            bigquery.ScalarQueryParameter("start_timestamp", "TIMESTAMP", start_timestamp),
+            bigquery.ScalarQueryParameter("end_timestamp", "TIMESTAMP", end_timestamp)
         ]
-        
-        # Build aggregated sales summary query
+
         query = """
-        SELECT 
-            COUNT(*) as total_orders
+        SELECT
+            SUM(totalAmount) AS total_sales
         FROM `{%s}`
-        WHERE DATE(createdAt) = @target_date
+        WHERE storeId = @store_id
+                    AND status = @status
+          AND createdAt BETWEEN @start_timestamp AND @end_timestamp
         """
-        
-        # Add store filter if provided
-        if store_id:
-            query += " AND storeId = @store_id"
-            query_parameters.append(
-                bigquery.ScalarQueryParameter("store_id", "STRING", store_id)
-            )
-        
-        # Create job configuration with all parameters
+
         job_config = bigquery.QueryJobConfig(query_parameters=query_parameters)
-        
+
         print(f"🔍 BigQuery sales summary query: {query}")
-        print(f"📋 Parameters: target_date={target_date.date()}, store_id={store_id}")
-        
-        # Execute query
-        # Fill in the table name at runtime
+        print(f"📋 Parameters: store_id={store_id}, from={from_date_param}, to={to_date_param}")
+
         query = query % (get_bigquery_table_name('orders'),)
         query_job = client.query(query, job_config=job_config)
         results = query_job.result()
-        
-        # Process results
-        summary = {}
+
         for row in results:
-            summary = {
-                "date": target_date.date().isoformat(),
-                "store_id": store_id,
-                "total_orders": row.total_orders or 0
-            }
-            break  # Should only be one row
-        
+            total_sales = float(row.total_sales or 0)
+            break
+        else:
+            total_sales = 0.0
+
         response_data = {
             "success": True,
-            "summary": summary
+            "store_id": store_id,
+            "from": from_date_param,
+            "to": to_date_param,
+            "total_sales": total_sales
         }
         
         return https_fn.Response(

@@ -399,9 +399,10 @@ def sync_order_to_bigquery(event: firestore_fn.Event[firestore_fn.DocumentSnapsh
             "createdBy": data.get("createdBy"),
             "customerInfo": {
                 "address": data.get("customerInfo", {}).get("address") if data.get("customerInfo") else None,
-                "customerUid": data.get("customerInfo", {}).get("customerUid") if data.get("customerInfo") else None,
+                "customerId": data.get("customerInfo", {}).get("customerId") if data.get("customerInfo") else None,
                 "fullName": data.get("customerInfo", {}).get("fullName") if data.get("customerInfo") else None,
-                "tin": data.get("customerInfo", {}).get("tin") if data.get("customerInfo") else None
+                "tin": data.get("customerInfo", {}).get("tin") if data.get("customerInfo") else None,
+                "uid": data.get("customerInfo", {}).get("uid") if data.get("customerInfo") else None
             } if data.get("customerInfo") else None,
             "date": ts_to_iso(data.get("date")),
             "discountAmount": float(data.get("discountAmount", 0)),
@@ -413,7 +414,8 @@ def sync_order_to_bigquery(event: firestore_fn.Event[firestore_fn.DocumentSnapsh
             "payments": {
                 "amountTendered": float(data.get("payments", {}).get("amountTendered", 0)) if data.get("payments") else 0,
                 "changeAmount": float(data.get("payments", {}).get("changeAmount", 0)) if data.get("payments") else 0,
-                "paymentDescription": data.get("payments", {}).get("paymentDescription") if data.get("payments") else None
+                "paymentDescription": data.get("payments", {}).get("paymentDescription") if data.get("payments") else None,
+                "paymentType": data.get("payments", {}).get("paymentType") if data.get("payments") else None
             } if data.get("payments") else None,
             "status": data.get("status", "active"),
             "statusHistory": normalize_status_history(data.get("statusHistory")),
@@ -522,9 +524,10 @@ def sync_order_to_bigquery_update(event: firestore_fn.Event[firestore_fn.Documen
             "createdBy": after.get("createdBy"),
             "customerInfo": {
                 "address": after.get("customerInfo", {}).get("address") if after.get("customerInfo") else None,
-                "customerUid": after.get("customerInfo", {}).get("customerUid") if after.get("customerInfo") else None,
+                "customerId": after.get("customerInfo", {}).get("customerId") if after.get("customerInfo") else None,
                 "fullName": after.get("customerInfo", {}).get("fullName") if after.get("customerInfo") else None,
-                "tin": after.get("customerInfo", {}).get("tin") if after.get("customerInfo") else None
+                "tin": after.get("customerInfo", {}).get("tin") if after.get("customerInfo") else None,
+                "uid": after.get("customerInfo", {}).get("uid") if after.get("customerInfo") else None
             } if after.get("customerInfo") else None,
             "date": ts_to_iso(after.get("date")),
             "discountAmount": float(after.get("discountAmount", 0)) if after.get("discountAmount") is not None else None,
@@ -536,7 +539,8 @@ def sync_order_to_bigquery_update(event: firestore_fn.Event[firestore_fn.Documen
             "payments": {
                 "amountTendered": float(after.get("payments", {}).get("amountTendered", 0)) if after.get("payments") else 0,
                 "changeAmount": float(after.get("payments", {}).get("changeAmount", 0)) if after.get("payments") else 0,
-                "paymentDescription": after.get("payments", {}).get("paymentDescription") if after.get("payments") else None
+                "paymentDescription": after.get("payments", {}).get("paymentDescription") if after.get("payments") else None,
+                "paymentType": after.get("payments", {}).get("paymentType") if after.get("payments") else None
             } if after.get("payments") else None,
             "status": after.get("status", "active"),
             "statusHistory": normalize_status_history(after.get("statusHistory")),

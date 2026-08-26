@@ -56,7 +56,8 @@ def main():
             "address": "Customer Addr",
             "customerId": "cust_123",
             "fullName": "Test Customer",
-            "tin": "TIN123"
+            "tin": "TIN123",
+            "uid": "customer_uid_123"
         },
         "date": now,
         "discountAmount": 0.0,
@@ -68,7 +69,8 @@ def main():
         "payments": {
             "amountTendered": 100.0,
             "changeAmount": 12.0,
-            "paymentDescription": "cash"
+            "paymentDescription": "cash",
+            "paymentType": "cash"
         },
         "status": "active",
         "storeId": "store_1",

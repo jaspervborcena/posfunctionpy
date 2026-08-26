@@ -24,7 +24,8 @@ CREATE TABLE `jasperpos-1dfd5.tovrika_pos.orders` (
     address STRING,
     customerId STRING,
     fullName STRING,
-    tin STRING
+    tin STRING,
+    uid STRING
   >,
   date TIMESTAMP,
   discountAmount FLOAT64,
