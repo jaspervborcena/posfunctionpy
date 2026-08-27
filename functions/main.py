@@ -7,7 +7,13 @@ initialize_app()
 # Importing the full BigQuery/Firestore trigger graph at startup can exceed the
 # Firebase backend bootstrap timeout during deploy discovery.
 from paypal_endpoints import paypal_client_config, paypal_create_order, paypal_capture_order
-from bigquery_triggers import sync_order_to_bigquery, sync_order_to_bigquery_update
+from bigquery_triggers import (
+    sync_order_to_bigquery,
+    sync_order_to_bigquery_update,
+    sync_order_selling_tracking_to_bigquery,
+    sync_order_selling_tracking_update,
+    sync_order_selling_tracking_delete,
+)
 from bigquery_api_endpoints import get_sales_summary_bq
 
 __all__ = [
@@ -16,5 +22,8 @@ __all__ = [
     "paypal_capture_order",
     "sync_order_to_bigquery",
     "sync_order_to_bigquery_update",
+    "sync_order_selling_tracking_to_bigquery",
+    "sync_order_selling_tracking_update",
+    "sync_order_selling_tracking_delete",
     "get_sales_summary_bq",
 ]

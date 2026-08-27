@@ -1082,7 +1082,7 @@ def sync_order_selling_tracking_to_bigquery(event: firestore_fn.Event[firestore_
             "cashierName": data.get("cashierName"),
             "category": data.get("category"),
             "companyId": data.get("companyId"),
-            "cost": to_numeric(data.get("cost")),
+            "cost": float(data.get("cost")) if data.get("cost") is not None else None,
             "createdAt": ts_to_iso(data.get("createdAt")),
             "createdBy": data.get("createdBy"),
             "discount": to_numeric(data.get("discount")),
@@ -1109,6 +1109,7 @@ def sync_order_selling_tracking_to_bigquery(event: firestore_fn.Event[firestore_
             "updatedAt": ts_to_iso(data.get("updatedAt")),
             "updatedBy": data.get("updatedBy"),
             "vat": to_numeric(data.get("vat")),
+            "version": data.get("version"),
         }
 
         print(f"🔍 All Firestore data keys: {list(data.keys())}")
@@ -1167,7 +1168,7 @@ def sync_order_selling_tracking_update(event: firestore_fn.Event[firestore_fn.Do
             "cashierName": after.get("cashierName"),
             "category": after.get("category"),
             "companyId": after.get("companyId"),
-            "cost": to_numeric(after.get("cost")),
+            "cost": float(after.get("cost")) if after.get("cost") is not None else None,
             "createdAt": ts_to_iso(after.get("createdAt")),
             "createdBy": after.get("createdBy"),
             "discount": to_numeric(after.get("discount")),
@@ -1194,6 +1195,7 @@ def sync_order_selling_tracking_update(event: firestore_fn.Event[firestore_fn.Do
             "updatedAt": ts_to_iso(after.get("updatedAt")),
             "updatedBy": after.get("updatedBy"),
             "vat": to_numeric(after.get("vat")),
+            "version": after.get("version"),
         }
 
         upd_payload = clean_payload(upd_payload)
