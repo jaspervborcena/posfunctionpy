@@ -325,7 +325,8 @@ def get_sales_summary_bq(req: https_fn.Request) -> https_fn.Response:
 
         query = """
         SELECT
-            SUM(totalAmount) AS total_sales
+            SUM(totalAmount) AS total_sales,
+            COUNT(*) AS order_count
         FROM `{%s}`
         WHERE storeId = @store_id
                     AND status = @status
@@ -343,16 +344,19 @@ def get_sales_summary_bq(req: https_fn.Request) -> https_fn.Response:
 
         for row in results:
             total_sales = float(row.total_sales or 0)
+            order_count = int(row.order_count or 0)
             break
         else:
             total_sales = 0.0
+            order_count = 0
 
         response_data = {
             "success": True,
             "store_id": store_id,
             "from": from_date_param,
             "to": to_date_param,
-            "total_sales": total_sales
+            "total_sales": total_sales,
+            "count": order_count
         }
         
         return https_fn.Response(
