@@ -41,6 +41,7 @@ def create_ordersellingtracking_table():
         bigquery.SchemaField("updatedBy", "STRING"),
         bigquery.SchemaField("itemIndex", "INTEGER"),
         bigquery.SchemaField("productId", "STRING"),
+        bigquery.SchemaField("itemCode", "STRING"),
         bigquery.SchemaField("productName", "STRING"),
         bigquery.SchemaField("price", "FLOAT64"),
         bigquery.SchemaField("quantity", "INTEGER"),

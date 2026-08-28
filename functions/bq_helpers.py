@@ -11,6 +11,12 @@ def clean_payload(obj):
     return obj
 
 
+def timestamp_value(value):
+    if value is None or isinstance(value, str):
+        return value
+    return value.isoformat() if hasattr(value, "isoformat") else str(value)
+
+
 def build_product_payload(product_id: str, data: dict) -> dict:
     """Build a BigQuery-ready product payload using canonical field names.
 
@@ -66,13 +72,12 @@ def build_orderdetails_payload(order_details_id: str, data: dict) -> dict:
         "orderDetailsId": order_details_id,
         "batchNumber": int(data.get("batchNumber")) if data.get("batchNumber") is not None else None,
         "companyId": data.get("companyId"),
-        "createdAt": data.get("createdAt").isoformat() if data.get("createdAt") else None,
+        "createdAt": timestamp_value(data.get("createdAt")),
         "createdBy": data.get("createdBy"),
         "orderId": data.get("orderId"),
-        "status": data.get("status"),
         "storeId": data.get("storeId"),
         "uid": data.get("uid"),
-        "updatedAt": data.get("updatedAt").isoformat() if data.get("updatedAt") else None,
+        "updatedAt": timestamp_value(data.get("updatedAt")),
         "updatedBy": data.get("updatedBy"),
         "items": []
     }
@@ -80,8 +85,10 @@ def build_orderdetails_payload(order_details_id: str, data: dict) -> dict:
     for item in data.get("items", []):
         item_payload = {
             "productId": item.get("productId"),
+            "itemCode": item.get("itemCode"),
             "productName": item.get("productName"),
             "quantity": int(item.get("quantity", 1)),
+            "status": item.get("status"),
             "price": float(item.get("price", 0)),
             "discount": float(item.get("discount", 0)),
             "vat": float(item.get("vat", 0)),

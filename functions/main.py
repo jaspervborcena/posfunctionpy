@@ -13,6 +13,9 @@ from bigquery_triggers import (
     sync_order_selling_tracking_to_bigquery,
     sync_order_selling_tracking_update,
     sync_order_selling_tracking_delete,
+    sync_order_details_to_bigquery,
+    sync_order_details_update,
+    sync_order_details_delete,
 )
 from bigquery_api_endpoints import get_sales_summary_bq
 
@@ -25,5 +28,8 @@ __all__ = [
     "sync_order_selling_tracking_to_bigquery",
     "sync_order_selling_tracking_update",
     "sync_order_selling_tracking_delete",
+    "sync_order_details_to_bigquery",
+    "sync_order_details_update",
+    "sync_order_details_delete",
     "get_sales_summary_bq",
 ]

@@ -111,6 +111,7 @@ def build_ost_payload(ost_id, d):
         "price":                    to_numeric(d.get("price")),
         "productCode":              d.get("productCode"),
         "productId":                d.get("productId"),
+        "itemCode":                 d.get("itemCode"),
         "productName":              d.get("productName"),
         "quantity":                 to_int(d.get("quantity")),
         "runningBalanceTotalStock": to_int(d.get("runningBalanceTotalStock")),

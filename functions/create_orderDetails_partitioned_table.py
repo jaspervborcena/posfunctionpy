@@ -48,6 +48,7 @@ def create_partitioned_table():
             mode="REPEATED",
             fields=[
                 bigquery.SchemaField("productId", "STRING"),
+                bigquery.SchemaField("itemCode", "STRING"),
                 bigquery.SchemaField("productName", "STRING"),
                 bigquery.SchemaField("quantity", "INT64"),
                 bigquery.SchemaField("price", "FLOAT64"),
