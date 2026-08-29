@@ -11,6 +11,27 @@ def clean_payload(obj):
     return obj
 
 
+def dedupe_items(items):
+    """Collapse repeated item entries by identity so status updates replace, not append."""
+    if not isinstance(items, list):
+        return []
+
+    merged = {}
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        key = (
+            item.get("itemCode")
+            or item.get("productId")
+            or item.get("productName")
+            or item.get("skuId")
+            or str(len(merged))
+        )
+        merged[key] = {**merged.get(key, {}), **item}
+
+    return list(merged.values())
+
+
 def timestamp_value(value):
     if value is None or isinstance(value, str):
         return value
@@ -82,7 +103,7 @@ def build_orderdetails_payload(order_details_id: str, data: dict) -> dict:
         "items": []
     }
 
-    for item in data.get("items", []):
+    for item in dedupe_items(data.get("items", [])):
         item_payload = {
             "productId": item.get("productId"),
             "itemCode": item.get("itemCode"),
