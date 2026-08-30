@@ -149,16 +149,21 @@ def main():
     )
     bq = bigquery.Client(project=BQ_PROJECT, credentials=sa_creds)
 
-    # ── Fetch existing IDs from BQ to avoid duplicates ───────────────────────
-    print("🔍 Fetching existing ordersSellingTrackingIds from BigQuery...")
+    # ── Fetch existing IDs + invoice/itemCode combos from BQ to avoid duplicates ───
+    print("🔍 Fetching existing ordersSellingTrackingIds and invoice/itemCode combos from BigQuery...")
     existing_ids = set()
+    existing_invoice_item_combos = set()
     try:
-        rows = bq.query(f"SELECT ordersSellingTrackingId FROM `{OST_TABLE}`").result()
+        rows = bq.query(f"SELECT ordersSellingTrackingId, invoiceNumber, itemCode FROM `{OST_TABLE}`").result()
         for row in rows:
             existing_ids.add(row.ordersSellingTrackingId)
+            # Create a tuple of (invoiceNumber, itemCode) to identify duplicates
+            if row.invoiceNumber and row.itemCode:
+                existing_invoice_item_combos.add((row.invoiceNumber, row.itemCode))
         print(f"   Found {len(existing_ids)} existing rows in BigQuery")
+        print(f"   Found {len(existing_invoice_item_combos)} unique invoice/itemCode combinations")
     except Exception as e:
-        print(f"⚠️  Could not fetch existing IDs (table may be empty): {e}")
+        print(f"⚠️  Could not fetch existing records (table may be empty): {e}")
 
     # ── Fetch from Firestore ─────────────────────────────────────────────────
     print(f"📥 Fetching from Firestore '{FIRESTORE_COLL}'...")
@@ -180,10 +185,22 @@ def main():
     skipped = 0
     for doc in docs:
         ost_id = doc.id
+        d = doc.to_dict()
+        
+        # Skip if the ordersSellingTrackingId already exists
         if ost_id in existing_ids:
             skipped += 1
+            print(f"   ⏭️ Skipping {ost_id}: document ID already exists in BQ")
             continue
-        d = doc.to_dict()
+        
+        # Skip if the same invoiceNumber + itemCode combination already exists
+        invoice_number = d.get("invoiceNumber")
+        item_code = d.get("itemCode")
+        if invoice_number and item_code and (invoice_number, item_code) in existing_invoice_item_combos:
+            skipped += 1
+            print(f"   ⏭️ Skipping {ost_id}: duplicate detected (invoiceNumber={invoice_number}, itemCode={item_code}) already exists in BQ")
+            continue
+        
         payload = build_ost_payload(ost_id, d)
         to_insert.append(payload)
 

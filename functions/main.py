@@ -11,13 +11,19 @@ from bigquery_triggers import (
     sync_order_to_bigquery,
     sync_order_to_bigquery_update,
     sync_order_selling_tracking_to_bigquery,
-    sync_order_selling_tracking_update,
     sync_order_selling_tracking_delete,
     sync_order_details_to_bigquery,
     sync_order_details_update,
     sync_order_details_delete,
 )
-from bigquery_api_endpoints import get_sales_summary_bq
+from bigquery_api_endpoints import (
+    get_sales_summary_bq,
+    get_sales_revenue_bq,
+    get_sales_orders_bq,
+    get_sales_adjustments_bq,
+    get_sales_customers_bq,
+    get_sales_status_breakdown_bq,
+)
 
 __all__ = [
     "paypal_client_config",
@@ -26,10 +32,14 @@ __all__ = [
     "sync_order_to_bigquery",
     "sync_order_to_bigquery_update",
     "sync_order_selling_tracking_to_bigquery",
-    "sync_order_selling_tracking_update",
     "sync_order_selling_tracking_delete",
     "sync_order_details_to_bigquery",
     "sync_order_details_update",
     "sync_order_details_delete",
     "get_sales_summary_bq",
+    "get_sales_revenue_bq",
+    "get_sales_orders_bq",
+    "get_sales_adjustments_bq",
+    "get_sales_customers_bq",
+    "get_sales_status_breakdown_bq",
 ]

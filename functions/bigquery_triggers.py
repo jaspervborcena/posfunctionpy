@@ -216,6 +216,64 @@ def get_current_balance(db, customer_uid):
     return 0
 
 
+def merge_order_selling_tracking(client, table_name, payload):
+    """Atomically upsert an OST row using its invoice/item identity."""
+    fields = list(payload.keys())
+    source_fields = ",\n                ".join(f"@{field} AS {field}" for field in fields)
+    update_fields = ",\n                    ".join(
+        (
+            "status = CASE WHEN target.status = 'completed' "
+            "AND source.status = 'open' THEN target.status ELSE source.status END"
+            if field == "status" else f"{field} = source.{field}"
+        )
+        for field in fields
+        if field != "ordersSellingTrackingId"
+    )
+    insert_fields = ", ".join(fields)
+    insert_values = ", ".join(f"source.{field}" for field in fields)
+
+    query = f"""
+        MERGE `{table_name}` AS target
+        USING (SELECT
+                {source_fields}
+        ) AS source
+        ON target.ordersSellingTrackingId = source.ordersSellingTrackingId
+           OR (
+             source.invoiceNumber IS NOT NULL
+             AND source.itemCode IS NOT NULL
+             AND target.invoiceNumber = source.invoiceNumber
+             AND target.itemCode = source.itemCode
+           )
+        WHEN MATCHED THEN
+          UPDATE SET
+                    {update_fields}
+        WHEN NOT MATCHED THEN
+          INSERT ({insert_fields})
+          VALUES ({insert_values})
+    """
+
+    type_by_field = {
+        "batchNumber": "INT64", "itemIndex": "INT64", "quantity": "INT64",
+        "runningBalanceTotalStock": "INT64", "isStockTracked": "BOOL",
+        "isVatExempt": "BOOL", "createdAt": "TIMESTAMP", "updatedAt": "TIMESTAMP",
+        "cost": "FLOAT64", "price": "NUMERIC", "discount": "NUMERIC",
+        "total": "NUMERIC", "vat": "NUMERIC"
+    }
+    array_fields = {"tagLabels", "tags"}
+    query_parameters = []
+    for field in fields:
+        value = payload.get(field)
+        if field in array_fields:
+            query_parameters.append(bigquery.ArrayQueryParameter(field, "STRING", value or []))
+        else:
+            query_parameters.append(bigquery.ScalarQueryParameter(
+                field, type_by_field.get(field, "STRING"), value
+            ))
+
+    job = client.query(query, job_config=bigquery.QueryJobConfig(query_parameters=query_parameters))
+    job.result()
+
+
 def write_balance_history(db, customer_uid, invoice_number, change, reason, transaction_id, timestamp, new_balance):
     try:
         payload = {
@@ -1061,17 +1119,6 @@ def sync_order_selling_tracking_to_bigquery(event: firestore_fn.Event[firestore_
     try:
         client = get_bigquery_client()
         
-        # Check if ordersSellingTracking already exists in BigQuery to avoid duplicate inserts
-        check_query = f"SELECT COUNT(*) as count FROM `{table_name}` WHERE ordersSellingTrackingId = @ostId"
-        check_params = [bigquery.ScalarQueryParameter("ostId", "STRING", ost_id)]
-        check_job_config = bigquery.QueryJobConfig(query_parameters=check_params)
-        check_job = client.query(check_query, job_config=check_job_config)
-        result = list(check_job.result())
-        
-        if result[0].count > 0:
-            print(f"⏭️ orderSellingTracking {ost_id} already exists in BigQuery - skipping duplicate insert")
-            return
-
         # Build payload with updated field schema to match new Firestore structure
         # Match BigQuery types: INT64 for batchNumber/quantity/itemIndex; NUMERIC for price/discount/vat/total
         payload = {
@@ -1119,17 +1166,25 @@ def sync_order_selling_tracking_to_bigquery(event: firestore_fn.Event[firestore_
 
         print(f"🧹 Final payload for BigQuery (orderSellingTracking): {payload}")
 
-        # Use streaming insert for orderSellingTracking (keeps nested items intact)
-        try:
-            table = client.get_table(table_name)
-            print(f"📤 Inserting payload into {table_name}")
-            errors = client.insert_rows_json(table, [payload])
-            if errors:
-                print(f"❌ BigQuery insert failed with errors: {errors}")
-            else:
-                print(f"✅ BigQuery insert successful for orderSellingTracking {ost_id}")
-        except Exception as ie:
-            print(f"❌ Exception while inserting orderSellingTracking to BigQuery: {ie}")
+        check_query = f"""
+            SELECT COUNT(*) AS count
+            FROM `{table_name}`
+            WHERE ordersSellingTrackingId = @ostId
+        """
+        check_config = bigquery.QueryJobConfig(query_parameters=[
+            bigquery.ScalarQueryParameter("ostId", "STRING", ost_id)
+        ])
+        existing = next(iter(client.query(check_query, job_config=check_config).result()), None)
+        if existing and existing.count:
+            print(f"⏭️ OST {ost_id} already exists; skipping retry")
+            return
+
+        table = client.get_table(table_name)
+        errors = client.insert_rows_json(table, [payload], row_ids=[ost_id])
+        if errors:
+            print(f"❌ BigQuery insert failed for OST {ost_id}: {errors}")
+        else:
+            print(f"✅ OST insert successful for orderSellingTracking {ost_id}")
 
     except Exception as e:
         print(f"❌ Unexpected error syncing orderSellingTracking to BigQuery: {e}")
@@ -1202,26 +1257,8 @@ def sync_order_selling_tracking_update(event: firestore_fn.Event[firestore_fn.Do
 
         upd_payload = clean_payload(upd_payload)
 
-        # Delete existing row then re-insert (same proven pattern as orders/orderDetails)
-        try:
-            del_query = f"DELETE FROM `{table_name}` WHERE ordersSellingTrackingId = @ostId"
-            del_params = [bigquery.ScalarQueryParameter("ostId", "STRING", ost_id)]
-            del_job = client.query(del_query, job_config=bigquery.QueryJobConfig(query_parameters=del_params))
-            del_job.result()
-            print(f"🗑️ Removed existing OST row {ost_id} (if any)")
-        except Exception as de:
-            print(f"⚠️ Warning deleting existing OST row: {de}")
-
-        try:
-            table = client.get_table(table_name)
-            print(f"📤 Inserting updated OST payload into {table_name}")
-            errors = client.insert_rows_json(table, [upd_payload])
-            if errors:
-                print(f"❌ BigQuery update insert failed: {errors}")
-            else:
-                print(f"✅ BigQuery update successful for orderSellingTracking {ost_id}")
-        except Exception as ie:
-            print(f"❌ Exception inserting updated OST to BigQuery: {ie}")
+        merge_order_selling_tracking(client, table_name, upd_payload)
+        print(f"✅ Atomic OST update successful for orderSellingTracking {ost_id}")
 
     except Exception as e:
         print(f"❌ Unexpected error syncing updated orderSellingTracking to BigQuery: {e}")

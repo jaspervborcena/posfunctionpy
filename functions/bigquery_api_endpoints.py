@@ -378,6 +378,225 @@ def get_sales_summary_bq(req: https_fn.Request) -> https_fn.Response:
         )
 
 
+def _sales_dashboard_request(req):
+    """Validate common sales dashboard parameters and return query context."""
+    if req.method == 'OPTIONS':
+        return https_fn.Response('', status=204, headers=DEFAULT_HEADERS), None
+
+    store_id = req.args.get('storeId')
+    from_param = req.args.get('from')
+    to_param = req.args.get('to')
+
+    if not store_id:
+        return https_fn.Response(
+            json.dumps({"error": "storeId parameter is required"}),
+            status=400,
+            headers=DEFAULT_HEADERS
+        ), None
+    if not from_param or not to_param:
+        return https_fn.Response(
+            json.dumps({"error": "from and to parameters are required (format YYYYMMDD or YYYY-MM-DD)"}),
+            status=400,
+            headers=DEFAULT_HEADERS
+        ), None
+
+    from_date = parse_date_string(from_param)
+    to_date = parse_date_string(to_param)
+    if not from_date or not to_date:
+        return https_fn.Response(
+            json.dumps({"error": "Invalid date format. Use YYYYMMDD or YYYY-MM-DD"}),
+            status=400,
+            headers=DEFAULT_HEADERS
+        ), None
+    if from_date > to_date:
+        return https_fn.Response(
+            json.dumps({"error": "from date cannot be later than to date"}),
+            status=400,
+            headers=DEFAULT_HEADERS
+        ), None
+
+    from auth_middleware import check_store_access, extract_user_permissions
+    has_access, access_error = check_store_access(req.user, store_id)
+    if not has_access:
+        perms = extract_user_permissions(req.user)
+        return https_fn.Response(
+            json.dumps({
+                "success": False,
+                "error": "Access denied",
+                "message": access_error,
+                "requested_store": store_id,
+                "user_store": perms.get('storeId')
+            }),
+            status=403,
+            headers=DEFAULT_HEADERS
+        ), None
+
+    return None, {
+        "store_id": store_id,
+        "from": from_param,
+        "to": to_param,
+        "start": from_date.replace(hour=0, minute=0, second=0, microsecond=0),
+        "end": to_date.replace(hour=23, minute=59, second=59, microsecond=999999)
+    }
+
+
+def _sales_query_response(req, query_body, row_mapper):
+    error_response, context = _sales_dashboard_request(req)
+    if error_response:
+        return error_response
+
+    try:
+        client = get_bigquery_client()
+        query = query_body % get_bigquery_table_name('ordersSellingTracking')
+        job_config = bigquery.QueryJobConfig(query_parameters=[
+            bigquery.ScalarQueryParameter("store_id", "STRING", context["store_id"]),
+            bigquery.ScalarQueryParameter("start_timestamp", "TIMESTAMP", context["start"]),
+            bigquery.ScalarQueryParameter("end_timestamp", "TIMESTAMP", context["end"])
+        ])
+        row = next(iter(client.query(query, job_config=job_config).result()), None)
+        data = row_mapper(row) if row else {}
+        response_data = {
+            "success": True,
+            "store_id": context["store_id"],
+            "from": context["from"],
+            "to": context["to"]
+        }
+        response_data.update(data)
+        return https_fn.Response(json.dumps(response_data), status=200, headers=DEFAULT_HEADERS)
+    except Exception as e:
+        print(f"❌ Sales dashboard BigQuery error: {e}")
+        return https_fn.Response(
+            json.dumps({"success": False, "error": str(e), "message": "Failed to query sales dashboard data"}),
+            status=500,
+            headers=DEFAULT_HEADERS
+        )
+
+
+def _number(value):
+    return float(value or 0)
+
+
+@https_fn.on_request(region="asia-east1")
+@require_auth
+def get_sales_revenue_bq(req: https_fn.Request) -> https_fn.Response:
+    """Return revenue and the dashboard net-profit calculation."""
+    query = """
+    SELECT
+      SUM(IF(status = 'completed', total, 0))
+        - SUM(IF(status = 'refund', total, 0))
+        - SUM(IF(status = 'damage', total, 0)) AS totalRevenue,
+      SUM(IF(status = 'completed', total, 0))
+        - SUM(IF(status = 'refund', total, 0))
+        - SUM(IF(status = 'damage', total, 0))
+        + SUM(IF(status = 'recovered', total, 0))
+        - SUM(IF(status = 'expense', total, 0)) AS netProfit
+    FROM `{%s}`
+    WHERE storeId = @store_id
+      AND createdAt BETWEEN @start_timestamp AND @end_timestamp
+    """
+    return _sales_query_response(
+        req, query,
+        lambda row: {"totalRevenue": _number(row.totalRevenue), "netProfit": _number(row.netProfit)}
+    )
+
+
+@https_fn.on_request(region="asia-east1")
+@require_auth
+def get_sales_orders_bq(req: https_fn.Request) -> https_fn.Response:
+    """Return completed order and item counts."""
+    query = """
+    SELECT COUNT(DISTINCT orderId) AS totalOrders, SUM(quantity) AS totalItems
+    FROM `{%s}`
+    WHERE status = 'completed' AND storeId = @store_id
+      AND createdAt BETWEEN @start_timestamp AND @end_timestamp
+    """
+    return _sales_query_response(
+        req, query,
+        lambda row: {"totalOrders": int(row.totalOrders or 0), "totalItems": int(row.totalItems or 0)}
+    )
+
+
+@https_fn.on_request(region="asia-east1")
+@require_auth
+def get_sales_adjustments_bq(req: https_fn.Request) -> https_fn.Response:
+    """Return returns, refunds, damage, unpaid, and recovered values."""
+    query = """
+    SELECT
+      SUM(IF(status = 'return', total, 0)) AS returnsValue,
+      SUM(IF(status = 'return', quantity, 0)) AS returnsUnits,
+      SUM(IF(status = 'refund', total, 0)) AS refundsValue,
+      SUM(IF(status = 'refund', quantity, 0)) AS refundsUnits,
+      SUM(IF(status = 'damage', total, 0)) AS damageValue,
+      SUM(IF(status = 'damage', quantity, 0)) AS damageUnits,
+      SUM(IF(status = 'unpaid', total, 0)) AS unpaidValue,
+      SUM(IF(status = 'recovered', total, 0)) AS recoveredValue
+    FROM `{%s}`
+    WHERE storeId = @store_id
+      AND createdAt BETWEEN @start_timestamp AND @end_timestamp
+    """
+    value_fields = ("returnsValue", "refundsValue", "damageValue", "unpaidValue", "recoveredValue")
+    unit_fields = ("returnsUnits", "refundsUnits", "damageUnits")
+    return _sales_query_response(
+        req, query,
+        lambda row: {
+            **{field: _number(getattr(row, field, 0)) for field in value_fields},
+            **{field: int(getattr(row, field, 0) or 0) for field in unit_fields}
+        }
+    )
+
+
+@https_fn.on_request(region="asia-east1")
+@require_auth
+def get_sales_customers_bq(req: https_fn.Request) -> https_fn.Response:
+    """Return the number of distinct customers with completed sales."""
+    query = """
+    SELECT COUNT(DISTINCT uid) AS totalCustomers
+    FROM `{%s}`
+    WHERE status = 'completed' AND storeId = @store_id
+      AND createdAt BETWEEN @start_timestamp AND @end_timestamp
+    """
+    return _sales_query_response(
+        req, query,
+        lambda row: {"totalCustomers": int(row.totalCustomers or 0)}
+    )
+
+
+@https_fn.on_request(region="asia-east1")
+@require_auth
+def get_sales_status_breakdown_bq(req: https_fn.Request) -> https_fn.Response:
+    """Return order counts and percentages grouped by status."""
+    error_response, context = _sales_dashboard_request(req)
+    if error_response:
+        return error_response
+    try:
+        client = get_bigquery_client()
+        query = """
+        SELECT status, COUNT(*) AS count,
+          ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER(), 1) AS percentage
+        FROM `{%s}`
+        WHERE storeId = @store_id
+          AND createdAt BETWEEN @start_timestamp AND @end_timestamp
+        GROUP BY status ORDER BY status
+        """ % get_bigquery_table_name('ordersSellingTracking')
+        job_config = bigquery.QueryJobConfig(query_parameters=[
+            bigquery.ScalarQueryParameter("store_id", "STRING", context["store_id"]),
+            bigquery.ScalarQueryParameter("start_timestamp", "TIMESTAMP", context["start"]),
+            bigquery.ScalarQueryParameter("end_timestamp", "TIMESTAMP", context["end"])
+        ])
+        rows = [{"status": row.status, "count": int(row.count), "percentage": _number(row.percentage)}
+                for row in client.query(query, job_config=job_config).result()]
+        return https_fn.Response(json.dumps({
+            "success": True,
+            "store_id": context["store_id"],
+            "from": context["from"],
+            "to": context["to"],
+            "statuses": rows
+        }), status=200, headers=DEFAULT_HEADERS)
+    except Exception as e:
+        print(f"❌ Sales status breakdown BigQuery error: {e}")
+        return https_fn.Response(json.dumps({"success": False, "error": str(e)}), status=500, headers=DEFAULT_HEADERS)
+
+
 @https_fn.on_request(region="asia-east1")
 @require_auth
 def sales_summary_by_product(req: https_fn.Request) -> https_fn.Response:
