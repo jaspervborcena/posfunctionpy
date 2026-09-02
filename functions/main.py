@@ -1,13 +1,45 @@
-# Welcome to Cloud Functions for Firebase for Python!
-# To get started, simply uncomment the below code or create your own.
-# Deploy with `firebase deploy`
-
-from firebase_functions import https_fn
 from firebase_admin import initialize_app
 
-# initialize_app()
-#
-#
-# @https_fn.on_request()
-# def on_request_example(req: https_fn.Request) -> https_fn.Response:
-#     return https_fn.Response("Hello world!")
+# Initialize Firebase Admin SDK once at startup.
+initialize_app()
+
+# Only import the functions required for the current deployment.
+# Importing the full BigQuery/Firestore trigger graph at startup can exceed the
+# Firebase backend bootstrap timeout during deploy discovery.
+from paypal_endpoints import paypal_client_config, paypal_create_order, paypal_capture_order
+from bigquery_triggers import (
+    sync_order_to_bigquery,
+    sync_order_to_bigquery_update,
+    sync_order_selling_tracking_to_bigquery,
+    sync_order_selling_tracking_delete,
+    sync_order_details_to_bigquery,
+    sync_order_details_update,
+    sync_order_details_delete,
+)
+from bigquery_api_endpoints import (
+    get_sales_summary_bq,
+    get_sales_revenue_bq,
+    get_sales_orders_bq,
+    get_sales_adjustments_bq,
+    get_sales_customers_bq,
+    get_sales_status_breakdown_bq,
+)
+
+__all__ = [
+    "paypal_client_config",
+    "paypal_create_order",
+    "paypal_capture_order",
+    "sync_order_to_bigquery",
+    "sync_order_to_bigquery_update",
+    "sync_order_selling_tracking_to_bigquery",
+    "sync_order_selling_tracking_delete",
+    "sync_order_details_to_bigquery",
+    "sync_order_details_update",
+    "sync_order_details_delete",
+    "get_sales_summary_bq",
+    "get_sales_revenue_bq",
+    "get_sales_orders_bq",
+    "get_sales_adjustments_bq",
+    "get_sales_customers_bq",
+    "get_sales_status_breakdown_bq",
+]

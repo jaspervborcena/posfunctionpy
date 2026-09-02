@@ -1,0 +1,1347 @@
+from firebase_functions import https_fn
+import json
+from datetime import datetime, timedelta
+
+# Import configuration 
+from config import get_bigquery_client, get_bigquery_table_name, DEFAULT_HEADERS, BACKFILL_PRESETS
+from config import BQ_TABLES, COLLECTIONS
+
+# Import authentication middleware
+from auth_middleware import require_auth, require_store_access, get_user_info
+from firebase_admin import firestore
+from datetime import timezone, timedelta
+
+try:
+    from google.cloud import bigquery
+    BIGQUERY_AVAILABLE = True
+except ImportError:
+    BIGQUERY_AVAILABLE = False
+    print("WARNING: BigQuery library not available. BigQuery functions will be disabled.")
+
+def parse_date_string(date_str):
+    """
+    Parse date string in either YYYYMMDD or YYYY-MM-DD format
+    
+    Args:
+        date_str: Date string in YYYYMMDD or YYYY-MM-DD format
+        
+    Returns:
+        datetime object or None if parsing fails
+    """
+    if not date_str:
+        return None
+    
+    # Try YYYYMMDD format first
+    if len(date_str) == 8 and date_str.isdigit():
+        try:
+            return datetime.strptime(date_str, "%Y%m%d")
+        except ValueError:
+            pass
+    
+    # Try YYYY-MM-DD format
+    try:
+        return datetime.strptime(date_str, "%Y-%m-%d")
+    except ValueError:
+        pass
+    
+    return None
+
+# API endpoint to get products by storeId from BigQuery
+@https_fn.on_request(region="asia-east1")
+@require_auth
+@require_store_access
+def get_products_bq(req: https_fn.Request) -> https_fn.Response:
+    """Get products for a specific store from BigQuery"""
+
+    # Handle CORS preflight
+    if req.method == 'OPTIONS':
+        headers = {
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET',
+            'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+            'Access-Control-Max-Age': '3600'
+        }
+        return https_fn.Response('', status=204, headers=headers)
+
+    store_id = req.args.get('storeId')
+    page_size = int(req.args.get('page_size', 20))
+    page_number = int(req.args.get('page_number', 1))
+    
+    # Validate and enforce constraints
+    if page_size > 100:
+        page_size = 100
+    if page_number <= 0:
+        page_number = 1
+
+    if not store_id:
+        return https_fn.Response(
+            json.dumps({"error": "storeId parameter is required"}),
+            status=400,
+            headers=DEFAULT_HEADERS
+        )
+
+    try:
+        client = get_bigquery_client()
+
+        # Use the exact query specified by user
+        query = """
+        SELECT *
+        FROM `{%s}`
+        WHERE storeId = @store_id
+        ORDER BY updatedAt DESC
+        LIMIT @page_size
+        OFFSET @offset
+        """
+
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("store_id", "STRING", store_id),
+                bigquery.ScalarQueryParameter("page_size", "INT64", page_size),
+                bigquery.ScalarQueryParameter("offset", "INT64", (page_number - 1) * page_size)
+            ]
+        )
+
+        print(f"🔍 BigQuery products query: {query}")
+        print(f"📋 Parameters: store_id={store_id}, page_size={page_size}, page_number={page_number}")
+
+        # Fill in the table name at runtime to avoid import-time environment discovery
+        query = query % (get_bigquery_table_name('products'),)
+        query_job = client.query(query, job_config=job_config)
+        results = query_job.result()
+
+        products = []
+        for row in results:
+            prod = dict(row)
+            # Convert timestamps to ISO strings
+            for key, value in prod.items():
+                if isinstance(value, datetime):
+                    prod[key] = value.isoformat()
+            products.append(prod)
+
+        response_data = {
+            "success": True,
+            "count": len(products),
+            "store_id": store_id,
+            "page_size": page_size,
+            "page_number": page_number,
+            "products": products
+        }
+
+        return https_fn.Response(
+            json.dumps(response_data),
+            status=200,
+            headers=DEFAULT_HEADERS
+        )
+
+    except Exception as e:
+        print(f"❌ BigQuery products query error: {str(e)}")
+        return https_fn.Response(
+            json.dumps({
+                "success": False,
+                "error": str(e),
+                "message": "Failed to query products from BigQuery"
+            }),
+            status=500,
+            headers=DEFAULT_HEADERS
+        )
+
+
+# API endpoint to get orders by storeId from BigQuery (paginated)
+@https_fn.on_request(region="asia-east1")
+@require_auth
+def get_orders_bq(req: https_fn.Request) -> https_fn.Response:
+    """Get orders for a specific store from BigQuery with pagination"""
+
+    # Handle CORS preflight
+    if req.method == 'OPTIONS':
+        headers = {
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET',
+            'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+            'Access-Control-Max-Age': '3600'
+        }
+        return https_fn.Response('', status=204, headers=headers)
+
+    store_id = req.args.get('storeId')
+    page_size = int(req.args.get('page_size', 20))
+    page_number = int(req.args.get('page_number', 1))
+    
+    # Validate and enforce constraints
+    if page_size > 100:
+        page_size = 100
+    if page_number <= 0:
+        page_number = 1
+
+    if not store_id:
+        return https_fn.Response(
+            json.dumps({"error": "storeId parameter is required"}),
+            status=400,
+            headers=DEFAULT_HEADERS
+        )
+
+    try:
+        client = get_bigquery_client()
+
+        # Use the exact query specified by user
+        query = """
+        SELECT *
+        FROM `{%s}`
+        WHERE storeId = @store_id
+        ORDER BY updatedAt DESC
+        LIMIT @page_size
+        OFFSET @offset
+        """
+
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("store_id", "STRING", store_id),
+                bigquery.ScalarQueryParameter("page_size", "INT64", page_size),
+                bigquery.ScalarQueryParameter("offset", "INT64", (page_number - 1) * page_size)
+            ]
+        )
+
+        print(f"🔍 BigQuery orders query: {query}")
+        print(f"📋 Parameters: store_id={store_id}, page_size={page_size}, page_number={page_number}")
+
+        # Fill in the table name at runtime
+        query = query % (get_bigquery_table_name('orders'),)
+        query_job = client.query(query, job_config=job_config)
+        results = query_job.result()
+
+        orders = []
+        for row in results:
+            order = dict(row)
+            # Convert timestamps to ISO strings
+            for key, value in order.items():
+                if isinstance(value, datetime):
+                    order[key] = value.isoformat()
+            orders.append(order)
+
+        response_data = {
+            "success": True,
+            "count": len(orders),
+            "store_id": store_id,
+            "page_size": page_size,
+            "page_number": page_number,
+            "orders": orders
+        }
+
+        return https_fn.Response(
+            json.dumps(response_data),
+            status=200,
+            headers=DEFAULT_HEADERS
+        )
+
+    except Exception as e:
+        print(f"❌ BigQuery orders query error: {str(e)}")
+        return https_fn.Response(
+            json.dumps({
+                "success": False,
+                "error": str(e),
+                "message": "Failed to query orders from BigQuery"
+            }),
+            status=500,
+            headers=DEFAULT_HEADERS
+        )
+
+
+# API endpoint to get sales summary from BigQuery
+@https_fn.on_request(region="asia-east1")
+@require_auth
+def get_sales_summary_bq(req: https_fn.Request) -> https_fn.Response:
+    """Get total sales for a store over an inclusive createdAt date range."""
+    
+    # Handle CORS for web requests
+    if req.method == 'OPTIONS':
+        headers = {
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET',
+            'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+            'Access-Control-Max-Age': '3600'
+        }
+        return https_fn.Response('', status=204, headers=headers)
+    
+    store_id = req.args.get('storeId')
+    from_date_param = req.args.get('from')
+    to_date_param = req.args.get('to')
+
+    if not store_id:
+        return https_fn.Response(
+            json.dumps({"error": "storeId parameter is required"}),
+            status=400,
+            headers=DEFAULT_HEADERS
+        )
+
+    if not from_date_param or not to_date_param:
+        return https_fn.Response(
+            json.dumps({"error": "from and to parameters are required (format YYYYMMDD or YYYY-MM-DD)"}),
+            status=400,
+            headers=DEFAULT_HEADERS
+        )
+
+    from_date = parse_date_string(from_date_param)
+    to_date = parse_date_string(to_date_param)
+    if not from_date or not to_date:
+        return https_fn.Response(
+            json.dumps({"error": "Invalid date format. Use YYYYMMDD or YYYY-MM-DD"}),
+            status=400,
+            headers=DEFAULT_HEADERS
+        )
+
+    if from_date > to_date:
+        return https_fn.Response(
+            json.dumps({"error": "from date cannot be later than to date"}),
+            status=400,
+            headers=DEFAULT_HEADERS
+        )
+
+    from auth_middleware import check_store_access, extract_user_permissions
+    has_access, access_error = check_store_access(req.user, store_id)
+    if not has_access:
+        perms = extract_user_permissions(req.user)
+        return https_fn.Response(
+            json.dumps({
+                "success": False,
+                "error": "Access denied",
+                "message": access_error,
+                "requested_store": store_id,
+                "user_store": perms.get('storeId')
+            }),
+            status=403,
+            headers=DEFAULT_HEADERS
+        )
+    
+    try:
+        client = get_bigquery_client()
+        
+        start_timestamp = from_date.replace(hour=0, minute=0, second=0, microsecond=0)
+        end_timestamp = to_date.replace(hour=23, minute=59, second=59, microsecond=999999)
+        query_parameters = [
+            bigquery.ScalarQueryParameter("store_id", "STRING", store_id),
+            bigquery.ScalarQueryParameter("status", "STRING", "completed"),
+            bigquery.ScalarQueryParameter("start_timestamp", "TIMESTAMP", start_timestamp),
+            bigquery.ScalarQueryParameter("end_timestamp", "TIMESTAMP", end_timestamp)
+        ]
+
+        query = """
+        SELECT
+            SUM(totalAmount) AS total_sales,
+            COUNT(*) AS order_count
+        FROM `{%s}`
+        WHERE storeId = @store_id
+                    AND status = @status
+          AND createdAt BETWEEN @start_timestamp AND @end_timestamp
+        """
+
+        job_config = bigquery.QueryJobConfig(query_parameters=query_parameters)
+
+        print(f"🔍 BigQuery sales summary query: {query}")
+        print(f"📋 Parameters: store_id={store_id}, from={from_date_param}, to={to_date_param}")
+
+        query = query % (get_bigquery_table_name('orders'),)
+        query_job = client.query(query, job_config=job_config)
+        results = query_job.result()
+
+        for row in results:
+            total_sales = float(row.total_sales or 0)
+            order_count = int(row.order_count or 0)
+            break
+        else:
+            total_sales = 0.0
+            order_count = 0
+
+        response_data = {
+            "success": True,
+            "store_id": store_id,
+            "from": from_date_param,
+            "to": to_date_param,
+            "total_sales": total_sales,
+            "count": order_count
+        }
+        
+        return https_fn.Response(
+            json.dumps(response_data),
+            status=200,
+            headers=DEFAULT_HEADERS
+        )
+        
+    except Exception as e:
+        print(f"❌ BigQuery sales summary query error: {str(e)}")
+        return https_fn.Response(
+            json.dumps({
+                "success": False,
+                "error": str(e),
+                "message": "Failed to query sales summary from BigQuery"
+            }),
+            status=500,
+            headers=DEFAULT_HEADERS
+        )
+
+
+def _sales_dashboard_request(req):
+    """Validate common sales dashboard parameters and return query context."""
+    if req.method == 'OPTIONS':
+        return https_fn.Response('', status=204, headers=DEFAULT_HEADERS), None
+
+    store_id = req.args.get('storeId')
+    from_param = req.args.get('from')
+    to_param = req.args.get('to')
+
+    if not store_id:
+        return https_fn.Response(
+            json.dumps({"error": "storeId parameter is required"}),
+            status=400,
+            headers=DEFAULT_HEADERS
+        ), None
+    if not from_param or not to_param:
+        return https_fn.Response(
+            json.dumps({"error": "from and to parameters are required (format YYYYMMDD or YYYY-MM-DD)"}),
+            status=400,
+            headers=DEFAULT_HEADERS
+        ), None
+
+    from_date = parse_date_string(from_param)
+    to_date = parse_date_string(to_param)
+    if not from_date or not to_date:
+        return https_fn.Response(
+            json.dumps({"error": "Invalid date format. Use YYYYMMDD or YYYY-MM-DD"}),
+            status=400,
+            headers=DEFAULT_HEADERS
+        ), None
+    if from_date > to_date:
+        return https_fn.Response(
+            json.dumps({"error": "from date cannot be later than to date"}),
+            status=400,
+            headers=DEFAULT_HEADERS
+        ), None
+
+    from auth_middleware import check_store_access, extract_user_permissions
+    has_access, access_error = check_store_access(req.user, store_id)
+    if not has_access:
+        perms = extract_user_permissions(req.user)
+        return https_fn.Response(
+            json.dumps({
+                "success": False,
+                "error": "Access denied",
+                "message": access_error,
+                "requested_store": store_id,
+                "user_store": perms.get('storeId')
+            }),
+            status=403,
+            headers=DEFAULT_HEADERS
+        ), None
+
+    return None, {
+        "store_id": store_id,
+        "from": from_param,
+        "to": to_param,
+        "start": from_date.replace(hour=0, minute=0, second=0, microsecond=0),
+        "end": to_date.replace(hour=23, minute=59, second=59, microsecond=999999)
+    }
+
+
+def _sales_query_response(req, query_body, row_mapper):
+    error_response, context = _sales_dashboard_request(req)
+    if error_response:
+        return error_response
+
+    try:
+        client = get_bigquery_client()
+        query = query_body % get_bigquery_table_name('ordersSellingTracking')
+        job_config = bigquery.QueryJobConfig(query_parameters=[
+            bigquery.ScalarQueryParameter("store_id", "STRING", context["store_id"]),
+            bigquery.ScalarQueryParameter("start_timestamp", "TIMESTAMP", context["start"]),
+            bigquery.ScalarQueryParameter("end_timestamp", "TIMESTAMP", context["end"])
+        ])
+        row = next(iter(client.query(query, job_config=job_config).result()), None)
+        data = row_mapper(row) if row else {}
+        response_data = {
+            "success": True,
+            "store_id": context["store_id"],
+            "from": context["from"],
+            "to": context["to"]
+        }
+        response_data.update(data)
+        return https_fn.Response(json.dumps(response_data), status=200, headers=DEFAULT_HEADERS)
+    except Exception as e:
+        print(f"❌ Sales dashboard BigQuery error: {e}")
+        return https_fn.Response(
+            json.dumps({"success": False, "error": str(e), "message": "Failed to query sales dashboard data"}),
+            status=500,
+            headers=DEFAULT_HEADERS
+        )
+
+
+def _number(value):
+    return float(value or 0)
+
+
+@https_fn.on_request(region="asia-east1")
+@require_auth
+def get_sales_revenue_bq(req: https_fn.Request) -> https_fn.Response:
+    """Return revenue and the dashboard net-profit calculation."""
+    query = """
+    SELECT
+      SUM(IF(status = 'completed', total, 0))
+        - SUM(IF(status = 'refund', total, 0))
+        - SUM(IF(status = 'damage', total, 0)) AS totalRevenue,
+      SUM(IF(status = 'completed', total, 0))
+        - SUM(IF(status = 'refund', total, 0))
+        - SUM(IF(status = 'damage', total, 0))
+        + SUM(IF(status = 'recovered', total, 0))
+        - SUM(IF(status = 'expense', total, 0)) AS netProfit
+    FROM `{%s}`
+    WHERE storeId = @store_id
+      AND createdAt BETWEEN @start_timestamp AND @end_timestamp
+    """
+    return _sales_query_response(
+        req, query,
+        lambda row: {"totalRevenue": _number(row.totalRevenue), "netProfit": _number(row.netProfit)}
+    )
+
+
+@https_fn.on_request(region="asia-east1")
+@require_auth
+def get_sales_orders_bq(req: https_fn.Request) -> https_fn.Response:
+    """Return completed order and item counts."""
+    query = """
+    SELECT COUNT(DISTINCT orderId) AS totalOrders, SUM(quantity) AS totalItems
+    FROM `{%s}`
+    WHERE status = 'completed' AND storeId = @store_id
+      AND createdAt BETWEEN @start_timestamp AND @end_timestamp
+    """
+    return _sales_query_response(
+        req, query,
+        lambda row: {"totalOrders": int(row.totalOrders or 0), "totalItems": int(row.totalItems or 0)}
+    )
+
+
+@https_fn.on_request(region="asia-east1")
+@require_auth
+def get_sales_adjustments_bq(req: https_fn.Request) -> https_fn.Response:
+    """Return returns, refunds, damage, unpaid, and recovered values."""
+    query = """
+    SELECT
+      SUM(IF(status = 'return', total, 0)) AS returnsValue,
+      SUM(IF(status = 'return', quantity, 0)) AS returnsUnits,
+      SUM(IF(status = 'refund', total, 0)) AS refundsValue,
+      SUM(IF(status = 'refund', quantity, 0)) AS refundsUnits,
+      SUM(IF(status = 'damage', total, 0)) AS damageValue,
+      SUM(IF(status = 'damage', quantity, 0)) AS damageUnits,
+      SUM(IF(status = 'unpaid', total, 0)) AS unpaidValue,
+      SUM(IF(status = 'recovered', total, 0)) AS recoveredValue
+    FROM `{%s}`
+    WHERE storeId = @store_id
+      AND createdAt BETWEEN @start_timestamp AND @end_timestamp
+    """
+    value_fields = ("returnsValue", "refundsValue", "damageValue", "unpaidValue", "recoveredValue")
+    unit_fields = ("returnsUnits", "refundsUnits", "damageUnits")
+    return _sales_query_response(
+        req, query,
+        lambda row: {
+            **{field: _number(getattr(row, field, 0)) for field in value_fields},
+            **{field: int(getattr(row, field, 0) or 0) for field in unit_fields}
+        }
+    )
+
+
+@https_fn.on_request(region="asia-east1")
+@require_auth
+def get_sales_customers_bq(req: https_fn.Request) -> https_fn.Response:
+    """Return the number of distinct customers with completed sales."""
+    query = """
+    SELECT COUNT(DISTINCT uid) AS totalCustomers
+    FROM `{%s}`
+    WHERE status = 'completed' AND storeId = @store_id
+      AND createdAt BETWEEN @start_timestamp AND @end_timestamp
+    """
+    return _sales_query_response(
+        req, query,
+        lambda row: {"totalCustomers": int(row.totalCustomers or 0)}
+    )
+
+
+@https_fn.on_request(region="asia-east1")
+@require_auth
+def get_sales_status_breakdown_bq(req: https_fn.Request) -> https_fn.Response:
+    """Return order counts and percentages grouped by status."""
+    error_response, context = _sales_dashboard_request(req)
+    if error_response:
+        return error_response
+    try:
+        client = get_bigquery_client()
+        query = """
+        SELECT status, COUNT(*) AS count,
+          ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER(), 1) AS percentage
+        FROM `{%s}`
+        WHERE storeId = @store_id
+          AND createdAt BETWEEN @start_timestamp AND @end_timestamp
+        GROUP BY status ORDER BY status
+        """ % get_bigquery_table_name('ordersSellingTracking')
+        job_config = bigquery.QueryJobConfig(query_parameters=[
+            bigquery.ScalarQueryParameter("store_id", "STRING", context["store_id"]),
+            bigquery.ScalarQueryParameter("start_timestamp", "TIMESTAMP", context["start"]),
+            bigquery.ScalarQueryParameter("end_timestamp", "TIMESTAMP", context["end"])
+        ])
+        rows = [{"status": row.status, "count": int(row.count), "percentage": _number(row.percentage)}
+                for row in client.query(query, job_config=job_config).result()]
+        return https_fn.Response(json.dumps({
+            "success": True,
+            "store_id": context["store_id"],
+            "from": context["from"],
+            "to": context["to"],
+            "statuses": rows
+        }), status=200, headers=DEFAULT_HEADERS)
+    except Exception as e:
+        print(f"❌ Sales status breakdown BigQuery error: {e}")
+        return https_fn.Response(json.dumps({"success": False, "error": str(e)}), status=500, headers=DEFAULT_HEADERS)
+
+
+@https_fn.on_request(region="asia-east1")
+@require_auth
+def sales_summary_by_product(req: https_fn.Request) -> https_fn.Response:
+    """Get sales summary grouped by product for a given month (YYYYMM).
+
+    Query parameters:
+    - month (required) - YYYYMM string, e.g. 202511
+    - storeId (optional) - filter by store
+    """
+
+    # Handle CORS
+    if req.method == 'OPTIONS':
+        return https_fn.Response('', status=204, headers=DEFAULT_HEADERS)
+
+    month = req.args.get('month')
+    store_id = req.args.get('storeId')
+
+    if not month:
+        return https_fn.Response(
+            json.dumps({"error": "month parameter is required (format: YYYYMM)"}),
+            status=400,
+            headers=DEFAULT_HEADERS
+        )
+
+    # Basic validation of month
+    if not (len(month) == 6 and month.isdigit()):
+        return https_fn.Response(
+            json.dumps({"error": "Invalid month format. Use YYYYMM."}),
+            status=400,
+            headers=DEFAULT_HEADERS
+        )
+
+    try:
+        client = get_bigquery_client()
+
+        query = """
+        SELECT
+          o.storeId as storeId,
+          o.invoiceNumber as invoiceNumber,
+          ost.productId as productId,
+          SUM(ost.total) AS totalAmount
+        FROM `{%s}` AS ost
+        JOIN `{%s}` AS o
+        ON ost.orderId = o.orderId
+        WHERE FORMAT_TIMESTAMP('%Y%m', ost.updatedAt) = @month
+          AND ost.status = 'completed'
+        """
+
+        query_params = [
+            bigquery.ScalarQueryParameter("month", "STRING", month)
+        ]
+
+        if store_id:
+            query += " AND o.storeId = @store_id"
+            query_params.append(bigquery.ScalarQueryParameter("store_id", "STRING", store_id))
+
+        query += "\nGROUP BY o.storeId, o.invoiceNumber, ost.productId\nORDER BY o.storeId, o.invoiceNumber, ost.productId"
+
+        job_config = bigquery.QueryJobConfig(query_parameters=query_params)
+
+        print(f"🔍 BigQuery sales_summary_by_product query: {query}")
+        print(f"📋 Parameters: month={month}, store_id={store_id}")
+
+        # Fill in table names at runtime
+        query = query % (get_bigquery_table_name('ordersSellingTracking'), get_bigquery_table_name('orders'))
+        query_job = client.query(query, job_config=job_config)
+        results = query_job.result()
+
+        rows = []
+        for row in results:
+            r = dict(row)
+            # Convert BigQuery NUMERIC (Decimal) to float for JSON serialization
+            total = r.get('totalAmount')
+            try:
+                if total is not None:
+                    total = float(total)
+            except Exception:
+                total = str(total)
+
+            rows.append({
+                "storeId": r.get('storeId'),
+                "invoiceNumber": r.get('invoiceNumber'),
+                "productId": r.get('productId'),
+                "totalAmount": total
+            })
+
+        response_data = {
+            "success": True,
+            "month": month,
+            "storeId": store_id,
+            "count": len(rows),
+            "rows": rows
+        }
+
+        return https_fn.Response(
+            json.dumps(response_data),
+            status=200,
+            headers=DEFAULT_HEADERS
+        )
+
+    except Exception as e:
+        print(f"❌ sales_summary_by_product BigQuery error: {e}")
+        return https_fn.Response(
+            json.dumps({"success": False, "error": str(e)}),
+            status=500,
+            headers=DEFAULT_HEADERS
+        )
+
+
+# (Removed duplicate earlier definition)
+
+
+@https_fn.on_request(region="asia-east1")
+@require_auth
+def sales_summary_by_store(req: https_fn.Request) -> https_fn.Response:
+    """Get sales summary grouped by store for a given month or specific day.
+
+    Query parameters:
+    - month (YYYYMM) optional
+    - date (YYYYMMDD or YYYY-MM-DD) optional
+    At least one of month or date is required. When both are provided, the query
+    will match records where either condition is true (OR), following the provided SQL pattern.
+    """
+
+    # Handle CORS
+    if req.method == 'OPTIONS':
+        return https_fn.Response('', status=204, headers=DEFAULT_HEADERS)
+
+    month = req.args.get('month')
+    date_param = req.args.get('date')
+    status = req.args.get('status')
+
+    # Support JSON body fallback for POST clients that send JSON instead of query params
+    body = None
+    try:
+        # firebase_functions Request supports get_json similar to Flask
+        body = req.get_json(silent=True) or {}
+    except Exception:
+        body = {}
+
+    # If query params were not provided, try to read from JSON body
+    if not month:
+        month = body.get('month') or body.get('Month')
+    if not date_param:
+        # Accept both 'date' and 'day' keys in JSON body
+        date_param = body.get('date') or body.get('day')
+    if not status:
+        status = body.get('status') or body.get('Status')
+
+    if not month and not date_param:
+        return https_fn.Response(
+            json.dumps({"error": "At least one of 'month' (YYYYMM) or 'date' (YYYYMMDD or YYYY-MM-DD) is required"}),
+            status=400,
+            headers=DEFAULT_HEADERS
+        )
+
+    # Validate month format if provided
+    if month and not (len(month) == 6 and month.isdigit()):
+        return https_fn.Response(
+            json.dumps({"error": "Invalid month format. Use YYYYMM."}),
+            status=400,
+            headers=DEFAULT_HEADERS
+        )
+
+    # Parse date if provided
+    parsed_date = None
+    if date_param:
+        parsed_date = parse_date_string(date_param)
+        if not parsed_date:
+            return https_fn.Response(
+                json.dumps({"error": "Invalid date format. Use YYYYMMDD or YYYY-MM-DD."}),
+                status=400,
+                headers=DEFAULT_HEADERS
+            )
+
+    try:
+        client = get_bigquery_client()
+
+        # Base query - status is parameterized (default to 'completed' if not provided)
+        query = """
+        SELECT
+          o.storeId as storeId,
+          SUM(ost.total) AS totalAmount
+        FROM `{%s}` AS ost
+        JOIN `{%s}` AS o
+        ON ost.orderId = o.orderId
+        WHERE ost.status = @status
+        """
+
+        query_params = []
+
+        # Default status to 'completed' when not provided
+        status_value = status if status else 'completed'
+        query_params.append(bigquery.ScalarQueryParameter("status", "STRING", status_value))
+
+        clauses = []
+
+        if month:
+            clauses.append("FORMAT_TIMESTAMP('%Y%m', ost.updatedAt) = @month")
+            query_params.append(bigquery.ScalarQueryParameter("month", "STRING", month))
+
+        if parsed_date:
+            clauses.append("DATE(ost.updatedAt) = @day")
+            query_params.append(bigquery.ScalarQueryParameter("day", "DATE", parsed_date.date()))
+
+        # Combine clauses with OR to match provided SQL pattern
+        if clauses:
+            query += " AND (" + " OR ".join(clauses) + ")"
+
+        query += "\nGROUP BY o.storeId\nORDER BY o.storeId"
+
+        job_config = bigquery.QueryJobConfig(query_parameters=query_params)
+
+        print(f"🔍 BigQuery sales_summary_by_store query: {query}")
+        print(f"📋 Parameters: month={month}, date={date_param}, status={status_value}")
+
+        # Fill in table names at runtime
+        query = query % (get_bigquery_table_name('ordersSellingTracking'), get_bigquery_table_name('orders'))
+        query_job = client.query(query, job_config=job_config)
+        results = query_job.result()
+
+        rows = []
+        for row in results:
+            r = dict(row)
+            total = r.get('totalAmount')
+            try:
+                if total is not None:
+                    total = float(total)
+            except Exception:
+                total = str(total)
+
+            rows.append({
+                "storeId": r.get('storeId'),
+                "totalAmount": total
+            })
+
+        response_data = {
+            "success": True,
+            "month": month,
+            "date": date_param,
+            "count": len(rows),
+            "rows": rows
+        }
+
+        return https_fn.Response(
+            json.dumps(response_data),
+            status=200,
+            headers=DEFAULT_HEADERS
+        )
+
+    except Exception as e:
+        print(f"❌ sales_summary_by_store BigQuery error: {e}")
+        return https_fn.Response(
+            json.dumps({"success": False, "error": str(e)}),
+            status=500,
+            headers=DEFAULT_HEADERS
+        )
+
+
+@https_fn.on_request(region="asia-east1")
+@require_auth
+def manage_item_status(req: https_fn.Request) -> https_fn.Response:
+    """Return order item rows (joined with products) for a given storeId and orderId.
+
+    Accepts:
+    - storeId (query param or JSON body)
+    - orderId (query param or JSON body)
+    """
+
+    # CORS preflight
+    if req.method == 'OPTIONS':
+        return https_fn.Response('', status=204, headers=DEFAULT_HEADERS)
+
+    # Prefer query params but accept JSON body fallback
+    store_id = req.args.get('storeId')
+    order_id = req.args.get('orderId')
+
+    body = None
+    try:
+        body = req.get_json(silent=True) or {}
+    except Exception:
+        body = {}
+
+    if not store_id:
+        store_id = body.get('storeId') or body.get('store_id')
+    if not order_id:
+        order_id = body.get('orderId') or body.get('order_id')
+
+    if not store_id or not order_id:
+        return https_fn.Response(
+            json.dumps({"error": "storeId and orderId are required (query params or JSON body)"}),
+            status=400,
+            headers=DEFAULT_HEADERS
+        )
+
+    try:
+        client = get_bigquery_client()
+
+        query = """
+        SELECT
+          ost.productName as productName,
+          p.skuId AS SKU,
+          ost.quantity as quantity,
+          ost.discountType as discountType,
+          ost.discount as discount,
+          ost.vat as vat,
+          p.isVatApplicable as isVatApplicable,
+          ost.isVatExempt as isVatExempt,
+          ost.total as total,
+          ost.updatedAt as updatedAt,
+          ost.status as status
+        FROM `{%s}` AS ost
+        JOIN `{%s}` AS p
+        ON ost.productId = p.productId
+        WHERE ost.storeId = @store_id
+          AND ost.orderId = @order_id
+        ORDER BY ost.updatedAt DESC
+        """
+
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("store_id", "STRING", store_id),
+                bigquery.ScalarQueryParameter("order_id", "STRING", order_id),
+            ]
+        )
+
+        print(f"🔍 BigQuery manage_item_status query: {query}")
+        print(f"📋 Parameters: store_id={store_id}, order_id={order_id}")
+
+        # Fill in table names at runtime
+        query = query % (get_bigquery_table_name('ordersSellingTracking'), get_bigquery_table_name('products'))
+        query_job = client.query(query, job_config=job_config)
+        results = query_job.result()
+
+        rows = []
+        for row in results:
+            r = dict(row)
+
+            # Convert timestamp to ISO and NUMERIC/Decimal to float (fallback to string)
+            for key, value in list(r.items()):
+                if isinstance(value, datetime):
+                    r[key] = value.isoformat()
+                else:
+                    try:
+                        # handle Decimal/NUMERIC
+                        if value is not None and hasattr(value, 'as_tuple'):
+                            r[key] = float(value)
+                    except Exception:
+                        r[key] = str(value)
+
+            rows.append(r)
+
+        response_data = {
+            "success": True,
+            "storeId": store_id,
+            "orderId": order_id,
+            "count": len(rows),
+            "rows": rows
+        }
+
+        return https_fn.Response(json.dumps(response_data), status=200, headers=DEFAULT_HEADERS)
+
+    except Exception as e:
+        print(f"❌ manage_item_status BigQuery error: {e}")
+        return https_fn.Response(json.dumps({"success": False, "error": str(e)}), status=500, headers=DEFAULT_HEADERS)
+
+# API endpoint to get order count statistics aggregated by date
+@https_fn.on_request(region="asia-east1")
+@require_auth
+def get_orders_count_by_date_bq(req: https_fn.Request) -> https_fn.Response:
+    """Get order count statistics aggregated by date (YYYYMMDD) based on updatedAt field"""
+    
+    # Handle CORS for web requests
+    if req.method == 'OPTIONS':
+        headers = {
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET',
+            'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+            'Access-Control-Max-Age': '3600'
+        }
+        return https_fn.Response('', status=204, headers=headers)
+    
+    # Get parameters from query string
+    from_date = req.args.get('from')
+    to_date = req.args.get('to')
+    store_id = req.args.get('storeId')  # Optional
+    
+    # Validate required parameters
+    if not from_date:
+        return https_fn.Response(
+            json.dumps({"error": "from parameter is required (format: YYYYMMDD)"}),
+            status=400,
+            headers=DEFAULT_HEADERS
+        )
+    
+    if not to_date:
+        return https_fn.Response(
+            json.dumps({"error": "to parameter is required (format: YYYYMMDD)"}),
+            status=400,
+            headers=DEFAULT_HEADERS
+        )
+    
+    # Parse dates (expect YYYYMMDD format)
+    from_dt = parse_date_string(from_date)
+    to_dt = parse_date_string(to_date)
+    
+    if not from_dt:
+        return https_fn.Response(
+            json.dumps({"error": "Invalid from date format. Use YYYYMMDD"}),
+            status=400,
+            headers=DEFAULT_HEADERS
+        )
+    
+    if not to_dt:
+        return https_fn.Response(
+            json.dumps({"error": "Invalid to date format. Use YYYYMMDD"}),
+            status=400,
+            headers=DEFAULT_HEADERS
+        )
+    
+    # Validate store access if storeId is provided
+    if store_id:
+        from auth_middleware import check_store_access, extract_user_permissions
+        has_access, access_error = check_store_access(req.user, store_id)
+        if not has_access:
+            perms = extract_user_permissions(req.user)
+            return https_fn.Response(
+                json.dumps({
+                    "success": False,
+                    "error": "Access denied",
+                    "message": access_error,
+                    "requested_store": store_id,
+                    "user_store": perms.get('storeId')
+                }),
+                status=403,
+                headers=DEFAULT_HEADERS
+            )
+    
+    try:
+        client = get_bigquery_client()
+        
+        # Build query parameters list
+        query_parameters = [
+            bigquery.ScalarQueryParameter("from_date", "DATE", from_dt.date()),
+            bigquery.ScalarQueryParameter("to_date", "DATE", to_dt.date())
+        ]
+        
+        # Build aggregation query - count orders by date based on updatedAt
+        query = """
+        SELECT 
+            FORMAT_DATE('%Y%m%d', DATE(updatedAt)) as Date,
+            COUNT(*) as order_count
+        FROM `{%s}`
+        WHERE DATE(updatedAt) BETWEEN @from_date AND @to_date
+        """
+        
+        # Add store filter if provided
+        if store_id:
+            query += " AND storeId = @store_id"
+            query_parameters.append(
+                bigquery.ScalarQueryParameter("store_id", "STRING", store_id)
+            )
+        
+        query += """
+        GROUP BY DATE(updatedAt)
+        ORDER BY DATE(updatedAt) DESC
+        """
+        
+        # Create job configuration with all parameters
+        job_config = bigquery.QueryJobConfig(query_parameters=query_parameters)
+        
+        print(f"🔍 BigQuery order count query: {query}")
+        print(f"📋 Parameters: from_date={from_dt.date()}, to_date={to_dt.date()}, store_id={store_id}")
+        
+        # Execute query with timeout and error handling
+        print(f"⏳ Starting BigQuery aggregation job...")
+        # Fill in table name at runtime
+        query = query % (get_bigquery_table_name('orders'),)
+        query_job = client.query(query, job_config=job_config)
+        
+        # Wait for job completion with timeout
+        try:
+            results = query_job.result(timeout=30)  # 30 second timeout
+            print(f"✅ BigQuery aggregation job completed, processing results...")
+        except Exception as job_error:
+            print(f"❌ BigQuery job failed or timed out: {job_error}")
+            # Check if it's a timeout vs actual failure
+            if "timeout" in str(job_error).lower():
+                return https_fn.Response(
+                    json.dumps({
+                        "success": False,
+                        "error": "Query timeout",
+                        "message": "BigQuery aggregation query took too long to complete"
+                    }),
+                    status=408,
+                    headers=DEFAULT_HEADERS
+                )
+            else:
+                raise job_error
+        
+        # Process results
+        daily_counts = []
+        total_orders = 0
+        row_count = 0
+        
+        try:
+            for row in results:
+                row_count += 1
+                daily_count = {
+                    "date": row.date_yyyymmdd,
+                    "full_date": row.date.isoformat() if row.date else None,
+                    "order_count": row.order_count
+                }
+                daily_counts.append(daily_count)
+                total_orders += row.order_count
+                
+                print(f"📅 {row.date_yyyymmdd}: {row.order_count} orders")
+                
+                # Safety check for large result sets
+                if row_count > 1000:  # Reasonable limit for daily aggregation
+                    print(f"⚠️ Result set truncated at {row_count} days to prevent memory issues")
+                    break
+            
+            print(f"📊 Successfully processed {len(daily_counts)} days with {total_orders} total orders")
+        except Exception as processing_error:
+            print(f"❌ Error processing aggregation results: {processing_error}")
+            raise processing_error
+        
+        response_data = {
+            "success": True,
+            "total_days": len(daily_counts),
+            "total_orders": total_orders,
+            "filters": {
+                "from_date": from_date,
+                "to_date": to_date,
+                "store_id": store_id
+            },
+            "daily_counts": daily_counts
+        }
+        
+        return https_fn.Response(
+            json.dumps(response_data),
+            status=200,
+            headers=DEFAULT_HEADERS
+        )
+        
+    except Exception as e:
+        print(f"❌ BigQuery order count aggregation error: {str(e)}")
+        return https_fn.Response(
+            json.dumps({
+                "success": False,
+                "error": str(e),
+                "message": "Failed to query order count statistics from BigQuery"
+            }),
+            status=500,
+            headers=DEFAULT_HEADERS
+        )
+
+# API endpoint to get order count statistics aggregated by date with amounts
+@https_fn.on_request(region="asia-east1")
+@require_auth
+def get_orders_count_by_status_bq(req: https_fn.Request) -> https_fn.Response:
+    """Get order count statistics aggregated by updatedAt date with amounts and filtering"""
+    
+    # Handle CORS for web requests
+    if req.method == 'OPTIONS':
+        headers = {
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET',
+            'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+            'Access-Control-Max-Age': '3600'
+        }
+        return https_fn.Response('', status=204, headers=headers)
+    
+    # Get parameters from query string
+    from_date = req.args.get('from')
+    to_date = req.args.get('to')
+    store_id = req.args.get('storeId')  # Optional
+    
+    # Validate required parameters
+    if not from_date:
+        return https_fn.Response(
+            json.dumps({"error": "from parameter is required (format: YYYYMMDD)"}),
+            status=400,
+            headers=DEFAULT_HEADERS
+        )
+    
+    if not to_date:
+        return https_fn.Response(
+            json.dumps({"error": "to parameter is required (format: YYYYMMDD)"}),
+            status=400,
+            headers=DEFAULT_HEADERS
+        )
+    
+    # Parse dates (expect YYYYMMDD format)
+    from_dt = parse_date_string(from_date)
+    to_dt = parse_date_string(to_date)
+    
+    if not from_dt:
+        return https_fn.Response(
+            json.dumps({"error": "Invalid from date format. Use YYYYMMDD"}),
+            status=400,
+            headers=DEFAULT_HEADERS
+        )
+    
+    if not to_dt:
+        return https_fn.Response(
+            json.dumps({"error": "Invalid to date format. Use YYYYMMDD"}),
+            status=400,
+            headers=DEFAULT_HEADERS
+        )
+    
+    # Validate store access if storeId is provided
+    if store_id:
+        from auth_middleware import check_store_access, extract_user_permissions
+        has_access, access_error = check_store_access(req.user, store_id)
+        if not has_access:
+            perms = extract_user_permissions(req.user)
+            return https_fn.Response(
+                json.dumps({
+                    "success": False,
+                    "error": "Access denied",
+                    "message": access_error,
+                    "requested_store": store_id,
+                    "user_store": perms.get('storeId')
+                }),
+                status=403,
+                headers=DEFAULT_HEADERS
+            )
+    
+    try:
+        client = get_bigquery_client()
+        
+        # Build query parameters list
+        query_parameters = [
+            bigquery.ScalarQueryParameter("from_date", "DATE", from_dt.date()),
+            bigquery.ScalarQueryParameter("to_date", "DATE", to_dt.date())
+        ]
+        
+        # Build aggregation query - count orders by date based on updatedAt
+        query = """
+        SELECT 
+            FORMAT_DATE('%Y%m%d', DATE(updatedAt)) as Date,
+            COUNT(*) as order_count
+        FROM `{%s}`
+        WHERE DATE(updatedAt) BETWEEN @from_date AND @to_date
+        """
+        
+        # Add store filter if provided
+        if store_id:
+            query += " AND storeId = @store_id"
+            query_parameters.append(
+                bigquery.ScalarQueryParameter("store_id", "STRING", store_id)
+            )
+        
+        query += """
+        GROUP BY DATE(updatedAt)
+        ORDER BY DATE(updatedAt) DESC
+        """
+        
+        # Create job configuration with all parameters
+        job_config = bigquery.QueryJobConfig(query_parameters=query_parameters)
+        
+        print(f"🔍 BigQuery order count by date query: {query}")
+        print(f"📋 Parameters: from_date={from_dt.date()}, to_date={to_dt.date()}, store_id={store_id}")
+        
+        # Execute query with timeout and error handling
+        print(f"⏳ Starting BigQuery aggregation job...")
+        # Fill in table name at runtime
+        query = query % (get_bigquery_table_name('orders'),)
+        query_job = client.query(query, job_config=job_config)
+        
+        # Wait for job completion with timeout
+        try:
+            results = query_job.result(timeout=30)  # 30 second timeout
+            print(f"✅ BigQuery aggregation job completed, processing results...")
+        except Exception as job_error:
+            print(f"❌ BigQuery job failed or timed out: {job_error}")
+            # Check if it's a timeout vs actual failure
+            if "timeout" in str(job_error).lower():
+                return https_fn.Response(
+                    json.dumps({
+                        "success": False,
+                        "error": "Query timeout",
+                        "message": "BigQuery aggregation query took too long to complete"
+                    }),
+                    status=408,
+                    headers=DEFAULT_HEADERS
+                )
+            else:
+                raise job_error
+        
+        # Process results
+        daily_counts = []
+        total_orders = 0
+        row_count = 0
+        
+        try:
+            for row in results:
+                row_count += 1
+                daily_count = {
+                    "date": row.Date,
+                    "order_count": row.order_count
+                }
+                daily_counts.append(daily_count)
+                total_orders += row.order_count
+                
+                print(f"📅 {row.Date}: {row.order_count} orders")
+                
+                # Safety check for large result sets
+                if row_count > 1000:  # Reasonable limit for daily aggregation
+                    print(f"⚠️ Result set truncated at {row_count} rows to prevent memory issues")
+                    break
+            
+            print(f"📊 Successfully processed {len(daily_counts)} days with {total_orders} total orders")
+        except Exception as processing_error:
+            print(f"❌ Error processing aggregation results: {processing_error}")
+            raise processing_error
+        
+        response_data = {
+            "success": True,
+            "total_days": len(daily_counts),
+            "total_orders": total_orders,
+            "filters": {
+                "from_date": from_date,
+                "to_date": to_date,
+                "store_id": store_id
+            },
+            "daily_counts": daily_counts
+        }
+        
+        return https_fn.Response(
+            json.dumps(response_data),
+            status=200,
+            headers=DEFAULT_HEADERS
+        )
+        
+    except Exception as e:
+        print(f"❌ BigQuery order count aggregation error: {str(e)}")
+        return https_fn.Response(
+            json.dumps({
+                "success": False,
+                "error": str(e),
+                "message": "Failed to query order count statistics from BigQuery"
+            }),
+            status=500,
+            headers=DEFAULT_HEADERS
+        )
