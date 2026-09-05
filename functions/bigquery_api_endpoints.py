@@ -46,6 +46,30 @@ def parse_date_string(date_str):
     
     return None
 
+
+def parse_datetime_string(datetime_str):
+    """Parse a date or timestamp and normalize it to UTC."""
+    if not datetime_str:
+        return None
+
+    parsed = parse_date_string(datetime_str)
+    if parsed:
+        return parsed.replace(tzinfo=timezone.utc)
+
+    if len(datetime_str) == 14 and datetime_str.isdigit():
+        try:
+            return datetime.strptime(datetime_str, "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
+        except ValueError:
+            return None
+
+    try:
+        parsed = datetime.fromisoformat(datetime_str.replace('Z', '+00:00'))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    except ValueError:
+        return None
+
 # API endpoint to get products by storeId from BigQuery
 @https_fn.on_request(region="asia-east1")
 @require_auth
@@ -86,7 +110,7 @@ def get_products_bq(req: https_fn.Request) -> https_fn.Response:
         # Use the exact query specified by user
         query = """
         SELECT *
-        FROM `{%s}`
+        FROM `%s`
         WHERE storeId = @store_id
         ORDER BY updatedAt DESC
         LIMIT @page_size
@@ -185,7 +209,7 @@ def get_orders_bq(req: https_fn.Request) -> https_fn.Response:
         # Use the exact query specified by user
         query = """
         SELECT *
-        FROM `{%s}`
+        FROM `%s`
         WHERE storeId = @store_id
         ORDER BY updatedAt DESC
         LIMIT @page_size
@@ -274,16 +298,16 @@ def get_sales_summary_bq(req: https_fn.Request) -> https_fn.Response:
 
     if not from_date_param or not to_date_param:
         return https_fn.Response(
-            json.dumps({"error": "from and to parameters are required (format YYYYMMDD or YYYY-MM-DD)"}),
+            json.dumps({"error": "from and to parameters are required (format YYYYMMDD, YYYYMMDDHHMMSS, or YYYY-MM-DD)"}),
             status=400,
             headers=DEFAULT_HEADERS
         )
 
-    from_date = parse_date_string(from_date_param)
-    to_date = parse_date_string(to_date_param)
+    from_date = parse_datetime_string(from_date_param)
+    to_date = parse_datetime_string(to_date_param)
     if not from_date or not to_date:
         return https_fn.Response(
-            json.dumps({"error": "Invalid date format. Use YYYYMMDD or YYYY-MM-DD"}),
+            json.dumps({"error": "Invalid date format. Use YYYYMMDD, YYYYMMDDHHMMSS, or YYYY-MM-DD"}),
             status=400,
             headers=DEFAULT_HEADERS
         )
@@ -314,20 +338,18 @@ def get_sales_summary_bq(req: https_fn.Request) -> https_fn.Response:
     try:
         client = get_bigquery_client()
         
-        start_timestamp = from_date.replace(hour=0, minute=0, second=0, microsecond=0)
-        end_timestamp = to_date.replace(hour=23, minute=59, second=59, microsecond=999999)
         query_parameters = [
             bigquery.ScalarQueryParameter("store_id", "STRING", store_id),
             bigquery.ScalarQueryParameter("status", "STRING", "completed"),
-            bigquery.ScalarQueryParameter("start_timestamp", "TIMESTAMP", start_timestamp),
-            bigquery.ScalarQueryParameter("end_timestamp", "TIMESTAMP", end_timestamp)
+            bigquery.ScalarQueryParameter("start_timestamp", "TIMESTAMP", from_date),
+            bigquery.ScalarQueryParameter("end_timestamp", "TIMESTAMP", to_date)
         ]
 
         query = """
         SELECT
             SUM(totalAmount) AS total_sales,
             COUNT(*) AS order_count
-        FROM `{%s}`
+        FROM `%s`
         WHERE storeId = @store_id
                     AND status = @status
           AND createdAt BETWEEN @start_timestamp AND @end_timestamp
@@ -400,8 +422,8 @@ def _sales_dashboard_request(req):
             headers=DEFAULT_HEADERS
         ), None
 
-    from_date = parse_date_string(from_param)
-    to_date = parse_date_string(to_param)
+    from_date = parse_datetime_string(from_param)
+    to_date = parse_datetime_string(to_param)
     if not from_date or not to_date:
         return https_fn.Response(
             json.dumps({"error": "Invalid date format. Use YYYYMMDD or YYYY-MM-DD"}),
@@ -414,6 +436,9 @@ def _sales_dashboard_request(req):
             status=400,
             headers=DEFAULT_HEADERS
         ), None
+
+    if parse_date_string(to_param):
+        to_date += timedelta(days=1)
 
     from auth_middleware import check_store_access, extract_user_permissions
     has_access, access_error = check_store_access(req.user, store_id)
@@ -435,8 +460,8 @@ def _sales_dashboard_request(req):
         "store_id": store_id,
         "from": from_param,
         "to": to_param,
-        "start": from_date.replace(hour=0, minute=0, second=0, microsecond=0),
-        "end": to_date.replace(hour=23, minute=59, second=59, microsecond=999999)
+        "start": from_date,
+        "end": to_date
     }
 
 
@@ -490,9 +515,10 @@ def get_sales_revenue_bq(req: https_fn.Request) -> https_fn.Response:
         - SUM(IF(status = 'damage', total, 0))
         + SUM(IF(status = 'recovered', total, 0))
         - SUM(IF(status = 'expense', total, 0)) AS netProfit
-    FROM `{%s}`
+    FROM `%s`
     WHERE storeId = @store_id
-      AND createdAt BETWEEN @start_timestamp AND @end_timestamp
+    AND createdAt >= @start_timestamp
+    AND createdAt < @end_timestamp
     """
     return _sales_query_response(
         req, query,
@@ -503,17 +529,59 @@ def get_sales_revenue_bq(req: https_fn.Request) -> https_fn.Response:
 @https_fn.on_request(region="asia-east1")
 @require_auth
 def get_sales_orders_bq(req: https_fn.Request) -> https_fn.Response:
-    """Return completed order and item counts."""
+    """Return order, item, and sales totals grouped by order status."""
     query = """
-    SELECT COUNT(DISTINCT orderId) AS totalOrders, SUM(quantity) AS totalItems
-    FROM `{%s}`
-    WHERE status = 'completed' AND storeId = @store_id
-      AND createdAt BETWEEN @start_timestamp AND @end_timestamp
+    SELECT
+      orderStatus,
+      COUNT(DISTINCT invoiceNumber) AS totalOrders,
+      COUNT(itemCode) AS totalItems,
+      SUM(orderTotal) AS totalSales
+    FROM `%s`
+    WHERE storeId = @storeId
+      AND createdAt >= @startDate
+      AND createdAt < @endDate
+    GROUP BY orderStatus
+    ORDER BY orderStatus
     """
-    return _sales_query_response(
-        req, query,
-        lambda row: {"totalOrders": int(row.totalOrders or 0), "totalItems": int(row.totalItems or 0)}
-    )
+    error_response, context = _sales_dashboard_request(req)
+    if error_response:
+        return error_response
+
+    try:
+        client = get_bigquery_client()
+        query = query % get_bigquery_table_name('ordersSellingTracking')
+        job_config = bigquery.QueryJobConfig(query_parameters=[
+            bigquery.ScalarQueryParameter("storeId", "STRING", context["store_id"]),
+            bigquery.ScalarQueryParameter("startDate", "TIMESTAMP", context["start"]),
+            bigquery.ScalarQueryParameter("endDate", "TIMESTAMP", context["end"])
+        ])
+        rows = []
+        for row in client.query(query, job_config=job_config).result():
+            rows.append({
+                "orderStatus": row.orderStatus,
+                "totalOrders": int(row.totalOrders or 0),
+                "totalItems": int(row.totalItems or 0),
+                "totalSales": _number(row.totalSales)
+            })
+
+        response_data = {
+            "success": True,
+            "store_id": context["store_id"],
+            "from": context["from"],
+            "to": context["to"],
+            "totalOrders": sum(row["totalOrders"] for row in rows),
+            "totalItems": sum(row["totalItems"] for row in rows),
+            "totalSales": sum(row["totalSales"] for row in rows),
+            "statuses": rows
+        }
+        return https_fn.Response(json.dumps(response_data), status=200, headers=DEFAULT_HEADERS)
+    except Exception as e:
+        print(f"❌ Sales orders BigQuery error: {e}")
+        return https_fn.Response(
+            json.dumps({"success": False, "error": str(e), "message": "Failed to query sales orders data"}),
+            status=500,
+            headers=DEFAULT_HEADERS
+        )
 
 
 @https_fn.on_request(region="asia-east1")
@@ -530,9 +598,10 @@ def get_sales_adjustments_bq(req: https_fn.Request) -> https_fn.Response:
       SUM(IF(status = 'damage', quantity, 0)) AS damageUnits,
       SUM(IF(status = 'unpaid', total, 0)) AS unpaidValue,
       SUM(IF(status = 'recovered', total, 0)) AS recoveredValue
-    FROM `{%s}`
+    FROM `%s`
     WHERE storeId = @store_id
-      AND createdAt BETWEEN @start_timestamp AND @end_timestamp
+    AND createdAt >= @start_timestamp
+    AND createdAt < @end_timestamp
     """
     value_fields = ("returnsValue", "refundsValue", "damageValue", "unpaidValue", "recoveredValue")
     unit_fields = ("returnsUnits", "refundsUnits", "damageUnits")
@@ -551,9 +620,10 @@ def get_sales_customers_bq(req: https_fn.Request) -> https_fn.Response:
     """Return the number of distinct customers with completed sales."""
     query = """
     SELECT COUNT(DISTINCT uid) AS totalCustomers
-    FROM `{%s}`
+    FROM `%s`
     WHERE status = 'completed' AND storeId = @store_id
-      AND createdAt BETWEEN @start_timestamp AND @end_timestamp
+    AND createdAt >= @start_timestamp
+    AND createdAt < @end_timestamp
     """
     return _sales_query_response(
         req, query,
@@ -573,9 +643,10 @@ def get_sales_status_breakdown_bq(req: https_fn.Request) -> https_fn.Response:
         query = """
         SELECT status, COUNT(*) AS count,
           ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER(), 1) AS percentage
-        FROM `{%s}`
+        FROM `%s`
         WHERE storeId = @store_id
-          AND createdAt BETWEEN @start_timestamp AND @end_timestamp
+          AND createdAt >= @start_timestamp
+          AND createdAt < @end_timestamp
         GROUP BY status ORDER BY status
         """ % get_bigquery_table_name('ordersSellingTracking')
         job_config = bigquery.QueryJobConfig(query_parameters=[
@@ -638,8 +709,8 @@ def sales_summary_by_product(req: https_fn.Request) -> https_fn.Response:
           o.invoiceNumber as invoiceNumber,
           ost.productId as productId,
           SUM(ost.total) AS totalAmount
-        FROM `{%s}` AS ost
-        JOIN `{%s}` AS o
+        FROM `%s` AS ost
+        JOIN `%s` AS o
         ON ost.orderId = o.orderId
         WHERE FORMAT_TIMESTAMP('%Y%m', ost.updatedAt) = @month
           AND ost.status = 'completed'
@@ -780,8 +851,8 @@ def sales_summary_by_store(req: https_fn.Request) -> https_fn.Response:
         SELECT
           o.storeId as storeId,
           SUM(ost.total) AS totalAmount
-        FROM `{%s}` AS ost
-        JOIN `{%s}` AS o
+        FROM `%s` AS ost
+        JOIN `%s` AS o
         ON ost.orderId = o.orderId
         WHERE ost.status = @status
         """
@@ -908,8 +979,8 @@ def manage_item_status(req: https_fn.Request) -> https_fn.Response:
           ost.total as total,
           ost.updatedAt as updatedAt,
           ost.status as status
-        FROM `{%s}` AS ost
-        JOIN `{%s}` AS p
+        FROM `%s` AS ost
+        JOIN `%s` AS p
         ON ost.productId = p.productId
         WHERE ost.storeId = @store_id
           AND ost.orderId = @order_id
@@ -1049,7 +1120,7 @@ def get_orders_count_by_date_bq(req: https_fn.Request) -> https_fn.Response:
         SELECT 
             FORMAT_DATE('%Y%m%d', DATE(updatedAt)) as Date,
             COUNT(*) as order_count
-        FROM `{%s}`
+        FROM `%s`
         WHERE DATE(updatedAt) BETWEEN @from_date AND @to_date
         """
         
@@ -1241,7 +1312,7 @@ def get_orders_count_by_status_bq(req: https_fn.Request) -> https_fn.Response:
         SELECT 
             FORMAT_DATE('%Y%m%d', DATE(updatedAt)) as Date,
             COUNT(*) as order_count
-        FROM `{%s}`
+        FROM `%s`
         WHERE DATE(updatedAt) BETWEEN @from_date AND @to_date
         """
         
