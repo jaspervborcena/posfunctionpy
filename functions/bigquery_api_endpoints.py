@@ -273,7 +273,7 @@ def get_orders_bq(req: https_fn.Request) -> https_fn.Response:
 @https_fn.on_request(region="asia-east1")
 @require_auth
 def get_sales_summary_bq(req: https_fn.Request) -> https_fn.Response:
-    """Get total sales for a store over an inclusive createdAt date range."""
+    """Get sales, item, and invoice totals grouped by status."""
     
     # Handle CORS for web requests
     if req.method == 'OPTIONS':
@@ -298,7 +298,15 @@ def get_sales_summary_bq(req: https_fn.Request) -> https_fn.Response:
 
     if not from_date_param or not to_date_param:
         return https_fn.Response(
-            json.dumps({"error": "from and to parameters are required (format YYYYMMDD, YYYYMMDDHHMMSS, or YYYY-MM-DD)"}),
+            json.dumps({"error": "from and to parameters are required (format YYYYMMDDHHMMSS)"}),
+            status=400,
+            headers=DEFAULT_HEADERS
+        )
+
+    if (len(from_date_param) != 14 or not from_date_param.isdigit() or
+            len(to_date_param) != 14 or not to_date_param.isdigit()):
+        return https_fn.Response(
+            json.dumps({"error": "Invalid date format. Use YYYYMMDDHHMMSS (14 digits)"}),
             status=400,
             headers=DEFAULT_HEADERS
         )
@@ -307,7 +315,7 @@ def get_sales_summary_bq(req: https_fn.Request) -> https_fn.Response:
     to_date = parse_datetime_string(to_date_param)
     if not from_date or not to_date:
         return https_fn.Response(
-            json.dumps({"error": "Invalid date format. Use YYYYMMDD, YYYYMMDDHHMMSS, or YYYY-MM-DD"}),
+            json.dumps({"error": "Invalid date format. Use YYYYMMDDHHMMSS (14 digits)"}),
             status=400,
             headers=DEFAULT_HEADERS
         )
@@ -339,20 +347,79 @@ def get_sales_summary_bq(req: https_fn.Request) -> https_fn.Response:
         client = get_bigquery_client()
         
         query_parameters = [
-            bigquery.ScalarQueryParameter("store_id", "STRING", store_id),
-            bigquery.ScalarQueryParameter("status", "STRING", "completed"),
-            bigquery.ScalarQueryParameter("start_timestamp", "TIMESTAMP", from_date),
-            bigquery.ScalarQueryParameter("end_timestamp", "TIMESTAMP", to_date)
+            bigquery.ScalarQueryParameter("storeId", "STRING", store_id),
+            bigquery.ScalarQueryParameter("startDate", "TIMESTAMP", from_date),
+            bigquery.ScalarQueryParameter("endDate", "TIMESTAMP", to_date)
         ]
 
         query = """
-        SELECT
-            SUM(totalAmount) AS total_sales,
-            COUNT(*) AS order_count
-        FROM `%s`
-        WHERE storeId = @store_id
-                    AND status = @status
-          AND createdAt BETWEEN @start_timestamp AND @end_timestamp
+                WITH status_summary AS (
+                    SELECT
+                        status,
+                        SUM(total) AS totalSales,
+                        SUM(quantity) AS totalItems,
+                        COUNT(DISTINCT invoiceNumber) AS totalOrders,
+                        COUNT(DISTINCT NULLIF(TRIM(customerId), '')) AS totalCustomer,
+                        SUM(vat) AS totalVat,
+                        SUM(discount) AS totalDiscount
+                    FROM `%s`
+                    WHERE storeId = @storeId
+                        AND createdAt BETWEEN @startDate AND @endDate
+                    GROUP BY status
+                ),
+                customer_summary AS (
+                    SELECT
+                        COUNT(DISTINCT IF(
+                            status IN ('completed', 'recovered'),
+                            NULLIF(TRIM(customerId), ''),
+                            NULL
+                        )) AS totalCustomer
+                    FROM `%s`
+                    WHERE storeId = @storeId
+                        AND createdAt BETWEEN @startDate AND @endDate
+                ),
+                revenue_summary AS (
+                    SELECT
+                        'Revenue' AS status,
+                        SUM(CASE WHEN status IN ('completed', 'recovered') THEN total ELSE 0 END)
+                        - SUM(CASE WHEN status IN ('cancelled', 'refunded', 'unpaid', 'expense') THEN total ELSE 0 END) AS totalSales,
+                        SUM(CASE WHEN status IN ('completed', 'recovered') THEN quantity ELSE 0 END)
+                        - SUM(CASE WHEN status IN ('cancelled', 'refunded', 'unpaid', 'expense') THEN quantity ELSE 0 END) AS totalItems,
+                        COUNT(DISTINCT CASE WHEN status IN ('completed', 'recovered') THEN invoiceNumber END) AS totalOrders,
+                        (SELECT totalCustomer FROM customer_summary) AS totalCustomer,
+                        SUM(CASE WHEN status IN ('completed', 'recovered') THEN vat ELSE 0 END) AS totalVat,
+                        SUM(CASE WHEN status IN ('completed', 'recovered') THEN discount ELSE 0 END) AS totalDiscount
+                    FROM `%s`
+                    WHERE storeId = @storeId
+                        AND createdAt BETWEEN @startDate AND @endDate
+                ),
+                net_summary AS (
+                    SELECT
+                        'NetTotals' AS status,
+                        (
+                            SUM(CASE WHEN status IN ('completed', 'recovered') THEN total ELSE 0 END)
+                            - SUM(CASE WHEN status IN ('cancelled', 'refunded', 'unpaid', 'expense') THEN total ELSE 0 END)
+                            - SUM(CASE WHEN status IN ('completed', 'recovered') THEN vat ELSE 0 END)
+                            - SUM(CASE WHEN status IN ('completed', 'recovered') THEN discount ELSE 0 END)
+                        ) AS totalSales,
+                        SUM(CASE WHEN status IN ('completed', 'recovered') THEN quantity ELSE 0 END)
+                        - SUM(CASE WHEN status IN ('cancelled', 'refunded', 'unpaid', 'expense') THEN quantity ELSE 0 END) AS totalItems,
+                        COUNT(DISTINCT CASE WHEN status IN ('completed', 'recovered') THEN invoiceNumber END) AS totalOrders,
+                        (SELECT totalCustomer FROM customer_summary) AS totalCustomer,
+                        SUM(CASE WHEN status IN ('completed', 'recovered') THEN vat ELSE 0 END) AS totalVat,
+                        SUM(CASE WHEN status IN ('completed', 'recovered') THEN discount ELSE 0 END) AS totalDiscount
+                    FROM `%s`
+                    WHERE storeId = @storeId
+                        AND createdAt BETWEEN @startDate AND @endDate
+                )
+                SELECT status, totalSales, totalItems, totalOrders, totalCustomer, totalVat, totalDiscount
+                FROM status_summary
+                UNION ALL
+                SELECT status, totalSales, totalItems, totalOrders, totalCustomer, totalVat, totalDiscount
+                FROM revenue_summary
+                UNION ALL
+                SELECT status, totalSales, totalItems, totalOrders, totalCustomer, totalVat, totalDiscount
+                FROM net_summary
         """
 
         job_config = bigquery.QueryJobConfig(query_parameters=query_parameters)
@@ -360,32 +427,25 @@ def get_sales_summary_bq(req: https_fn.Request) -> https_fn.Response:
         print(f"🔍 BigQuery sales summary query: {query}")
         print(f"📋 Parameters: store_id={store_id}, from={from_date_param}, to={to_date_param}")
 
-        query = query % (get_bigquery_table_name('orders'),)
+        table_name = get_bigquery_table_name('ordersSellingTracking')
+        query = query % (table_name, table_name, table_name, table_name)
         query_job = client.query(query, job_config=job_config)
         results = query_job.result()
 
+        rows = []
         for row in results:
-            total_sales = float(row.total_sales or 0)
-            order_count = int(row.order_count or 0)
-            break
-        else:
-            total_sales = 0.0
-            order_count = 0
+            rows.append({
+                "storeId": store_id,
+                "status": row.status,
+                "totalSales": _number(row.totalSales),
+                "totalItems": int(row.totalItems or 0),
+                "totalOrders": int(row.totalOrders or 0),
+                "totalCustomer": int(row.totalCustomer or 0),
+                "totalVat": None if row.totalVat is None else _number(row.totalVat),
+                "totalDiscount": None if row.totalDiscount is None else _number(row.totalDiscount)
+            })
 
-        response_data = {
-            "success": True,
-            "store_id": store_id,
-            "from": from_date_param,
-            "to": to_date_param,
-            "total_sales": total_sales,
-            "count": order_count
-        }
-        
-        return https_fn.Response(
-            json.dumps(response_data),
-            status=200,
-            headers=DEFAULT_HEADERS
-        )
+        return https_fn.Response(json.dumps(rows), status=200, headers=DEFAULT_HEADERS)
         
     except Exception as e:
         print(f"❌ BigQuery sales summary query error: {str(e)}")
@@ -524,64 +584,6 @@ def get_sales_revenue_bq(req: https_fn.Request) -> https_fn.Response:
         req, query,
         lambda row: {"totalRevenue": _number(row.totalRevenue), "netProfit": _number(row.netProfit)}
     )
-
-
-@https_fn.on_request(region="asia-east1")
-@require_auth
-def get_sales_orders_bq(req: https_fn.Request) -> https_fn.Response:
-    """Return order, item, and sales totals grouped by order status."""
-    query = """
-    SELECT
-      orderStatus,
-      COUNT(DISTINCT invoiceNumber) AS totalOrders,
-      COUNT(itemCode) AS totalItems,
-      SUM(orderTotal) AS totalSales
-    FROM `%s`
-    WHERE storeId = @storeId
-      AND createdAt >= @startDate
-      AND createdAt < @endDate
-    GROUP BY orderStatus
-    ORDER BY orderStatus
-    """
-    error_response, context = _sales_dashboard_request(req)
-    if error_response:
-        return error_response
-
-    try:
-        client = get_bigquery_client()
-        query = query % get_bigquery_table_name('ordersSellingTracking')
-        job_config = bigquery.QueryJobConfig(query_parameters=[
-            bigquery.ScalarQueryParameter("storeId", "STRING", context["store_id"]),
-            bigquery.ScalarQueryParameter("startDate", "TIMESTAMP", context["start"]),
-            bigquery.ScalarQueryParameter("endDate", "TIMESTAMP", context["end"])
-        ])
-        rows = []
-        for row in client.query(query, job_config=job_config).result():
-            rows.append({
-                "orderStatus": row.orderStatus,
-                "totalOrders": int(row.totalOrders or 0),
-                "totalItems": int(row.totalItems or 0),
-                "totalSales": _number(row.totalSales)
-            })
-
-        response_data = {
-            "success": True,
-            "store_id": context["store_id"],
-            "from": context["from"],
-            "to": context["to"],
-            "totalOrders": sum(row["totalOrders"] for row in rows),
-            "totalItems": sum(row["totalItems"] for row in rows),
-            "totalSales": sum(row["totalSales"] for row in rows),
-            "statuses": rows
-        }
-        return https_fn.Response(json.dumps(response_data), status=200, headers=DEFAULT_HEADERS)
-    except Exception as e:
-        print(f"❌ Sales orders BigQuery error: {e}")
-        return https_fn.Response(
-            json.dumps({"success": False, "error": str(e), "message": "Failed to query sales orders data"}),
-            status=500,
-            headers=DEFAULT_HEADERS
-        )
 
 
 @https_fn.on_request(region="asia-east1")

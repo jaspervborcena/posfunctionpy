@@ -28,6 +28,7 @@ def create_ordersellingtracking_table():
         bigquery.SchemaField("cashierId", "STRING"),
         bigquery.SchemaField("cashierName", "STRING"),
         bigquery.SchemaField("companyId", "STRING"),
+        bigquery.SchemaField("customerId", "STRING"),
         bigquery.SchemaField("cost", "FLOAT64"),
         bigquery.SchemaField("createdAt", "TIMESTAMP"),
         bigquery.SchemaField("createdBy", "STRING"),

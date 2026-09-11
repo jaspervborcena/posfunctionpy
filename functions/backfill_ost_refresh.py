@@ -89,6 +89,7 @@ def build_ost_payload(ost_id, d):
         "cashierName":              d.get("cashierName"),
         "category":                 d.get("category"),
         "companyId":                d.get("companyId"),
+        "customerId":               d.get("customerId"),
         "cost":                     to_numeric(d.get("cost")),
         "createdAt":                ts_to_iso(d.get("createdAt")),
         "createdBy":                d.get("createdBy"),
