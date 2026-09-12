@@ -364,7 +364,7 @@ def get_sales_summary_bq(req: https_fn.Request) -> https_fn.Response:
                         SUM(discount) AS totalDiscount
                     FROM `%s`
                     WHERE storeId = @storeId
-                        AND createdAt BETWEEN @startDate AND @endDate
+                        AND updatedAt BETWEEN @startDate AND @endDate
                     GROUP BY status
                 ),
                 customer_summary AS (
@@ -376,7 +376,7 @@ def get_sales_summary_bq(req: https_fn.Request) -> https_fn.Response:
                         )) AS totalCustomer
                     FROM `%s`
                     WHERE storeId = @storeId
-                        AND createdAt BETWEEN @startDate AND @endDate
+                        AND updatedAt BETWEEN @startDate AND @endDate
                 ),
                 revenue_summary AS (
                     SELECT
@@ -391,7 +391,7 @@ def get_sales_summary_bq(req: https_fn.Request) -> https_fn.Response:
                         SUM(CASE WHEN status IN ('completed', 'recovered') THEN discount ELSE 0 END) AS totalDiscount
                     FROM `%s`
                     WHERE storeId = @storeId
-                        AND createdAt BETWEEN @startDate AND @endDate
+                        AND updatedAt BETWEEN @startDate AND @endDate
                 ),
                 net_summary AS (
                     SELECT
@@ -410,7 +410,7 @@ def get_sales_summary_bq(req: https_fn.Request) -> https_fn.Response:
                         SUM(CASE WHEN status IN ('completed', 'recovered') THEN discount ELSE 0 END) AS totalDiscount
                     FROM `%s`
                     WHERE storeId = @storeId
-                        AND createdAt BETWEEN @startDate AND @endDate
+                        AND updatedAt BETWEEN @startDate AND @endDate
                 )
                 SELECT status, totalSales, totalItems, totalOrders, totalCustomer, totalVat, totalDiscount
                 FROM status_summary
