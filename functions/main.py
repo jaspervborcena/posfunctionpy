@@ -19,6 +19,8 @@ from bigquery_triggers import (
 )
 from bigquery_api_endpoints import (
     get_sales_summary_bq,
+    get_sales_summary_details_bq,
+    get_sales_summary_order_details_bq,
     get_sales_revenue_bq,
     get_sales_adjustments_bq,
     get_sales_customers_bq,
@@ -38,6 +40,8 @@ __all__ = [
     "sync_order_details_update",
     "sync_order_details_delete",
     "get_sales_summary_bq",
+    "get_sales_summary_details_bq",
+    "get_sales_summary_order_details_bq",
     "get_sales_revenue_bq",
     "get_sales_adjustments_bq",
     "get_sales_customers_bq",

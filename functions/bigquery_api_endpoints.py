@@ -1,6 +1,7 @@
 from firebase_functions import https_fn
 import json
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
+from decimal import Decimal
 
 # Import configuration 
 from config import get_bigquery_client, get_bigquery_table_name, DEFAULT_HEADERS, BACKFILL_PRESETS
@@ -523,6 +524,161 @@ def _sales_dashboard_request(req):
         "start": from_date,
         "end": to_date
     }
+
+
+def _json_safe(value):
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, dict) or hasattr(value, "items"):
+        return {key: _json_safe(item) for key, item in value.items()}
+    return value
+
+
+@https_fn.on_request(region="asia-east1")
+@require_auth
+def get_sales_summary_details_bq(req: https_fn.Request) -> https_fn.Response:
+    """Return full order records for a store and date range."""
+    error_response, context = _sales_dashboard_request(req)
+    if error_response:
+        return error_response
+
+    try:
+        page_size = int(req.args.get("page_size", 100))
+        page_number = int(req.args.get("page_number", 1))
+    except (TypeError, ValueError):
+        return https_fn.Response(
+            json.dumps({"error": "page_size and page_number must be integers"}),
+            status=400,
+            headers=DEFAULT_HEADERS
+        )
+
+    if page_size < 1 or page_number < 1:
+        return https_fn.Response(
+            json.dumps({"error": "page_size and page_number must be greater than zero"}),
+            status=400,
+            headers=DEFAULT_HEADERS
+        )
+    page_size = min(page_size, 100)
+
+    try:
+        query = """
+        SELECT *
+        FROM `%s`
+        WHERE storeId = @store_id
+          AND createdAt >= @start_timestamp
+          AND createdAt < @end_timestamp
+        ORDER BY createdAt DESC, orderId
+        LIMIT @fetch_limit
+        OFFSET @offset
+        """ % get_bigquery_table_name("orders")
+        job_config = bigquery.QueryJobConfig(query_parameters=[
+            bigquery.ScalarQueryParameter("store_id", "STRING", context["store_id"]),
+            bigquery.ScalarQueryParameter("start_timestamp", "TIMESTAMP", context["start"]),
+            bigquery.ScalarQueryParameter("end_timestamp", "TIMESTAMP", context["end"]),
+            bigquery.ScalarQueryParameter("fetch_limit", "INT64", page_size + 1),
+            bigquery.ScalarQueryParameter("offset", "INT64", (page_number - 1) * page_size)
+        ])
+        client = get_bigquery_client()
+        rows = list(client.query(query, job_config=job_config).result())
+        has_more = len(rows) > page_size
+        orders = [_json_safe(dict(row)) for row in rows[:page_size]]
+
+        return https_fn.Response(json.dumps({
+            "success": True,
+            "store_id": context["store_id"],
+            "from": context["from"],
+            "to": context["to"],
+            "count": len(orders),
+            "page_size": page_size,
+            "page_number": page_number,
+            "has_more": has_more,
+            "orders": orders
+        }), status=200, headers=DEFAULT_HEADERS)
+    except Exception as e:
+        print(f"❌ Sales summary details BigQuery error: {e}")
+        return https_fn.Response(
+            json.dumps({
+                "success": False,
+                "error": str(e),
+                "message": "Failed to query sales summary order details"
+            }),
+            status=500,
+            headers=DEFAULT_HEADERS
+        )
+
+
+@https_fn.on_request(region="asia-east1")
+@require_auth
+def get_sales_summary_order_details_bq(req: https_fn.Request) -> https_fn.Response:
+    """Return all order-selling-tracking rows for one order or invoice."""
+    if req.method == 'OPTIONS':
+        return https_fn.Response('', status=204, headers=DEFAULT_HEADERS)
+
+    order_id = req.args.get("orderId")
+    invoice_number = req.args.get("invoiceNumber")
+    if bool(order_id) == bool(invoice_number):
+        return https_fn.Response(
+            json.dumps({"error": "Provide exactly one of orderId or invoiceNumber"}),
+            status=400,
+            headers=DEFAULT_HEADERS
+        )
+
+    identifier_column = "orderId" if order_id else "invoiceNumber"
+    identifier = order_id or invoice_number
+
+    try:
+        query = """
+        SELECT *
+        FROM `%s`
+        WHERE %s = @identifier
+        ORDER BY itemIndex, createdAt
+        """ % (get_bigquery_table_name("ordersSellingTracking"), identifier_column)
+        job_config = bigquery.QueryJobConfig(query_parameters=[
+            bigquery.ScalarQueryParameter("identifier", "STRING", identifier)
+        ])
+        client = get_bigquery_client()
+        rows = client.query(query, job_config=job_config).result()
+
+        from auth_middleware import check_store_access
+        details = []
+        for row in rows:
+            order_detail = dict(row)
+            has_access, _ = check_store_access(req.user, order_detail.get("storeId"))
+            if has_access:
+                details.append(_json_safe(order_detail))
+
+        if not details:
+            return https_fn.Response(
+                json.dumps({
+                    "success": False,
+                    "error": "Order details not found"
+                }),
+                status=404,
+                headers=DEFAULT_HEADERS
+            )
+
+        return https_fn.Response(json.dumps({
+            "success": True,
+            "matched_by": identifier_column,
+            "identifier": identifier,
+            "count": len(details),
+            "details": details
+        }), status=200, headers=DEFAULT_HEADERS)
+    except Exception as e:
+        print(f"❌ Sales summary order details BigQuery error: {e}")
+        return https_fn.Response(
+            json.dumps({
+                "success": False,
+                "error": str(e),
+                "message": "Failed to query sales summary order details"
+            }),
+            status=500,
+            headers=DEFAULT_HEADERS
+        )
 
 
 def _sales_query_response(req, query_body, row_mapper):
