@@ -1158,7 +1158,6 @@ def sync_order_selling_tracking_to_bigquery(event: firestore_fn.Event[firestore_
             "updatedAt": ts_to_iso(data.get("updatedAt")),
             "updatedBy": data.get("updatedBy"),
             "vat": to_numeric(data.get("vat")),
-            "version": data.get("version"),
         }
 
         print(f"🔍 All Firestore data keys: {list(data.keys())}")
@@ -1183,12 +1182,13 @@ def sync_order_selling_tracking_to_bigquery(event: firestore_fn.Event[firestore_
         table = client.get_table(table_name)
         errors = client.insert_rows_json(table, [payload], row_ids=[ost_id])
         if errors:
-            print(f"❌ BigQuery insert failed for OST {ost_id}: {errors}")
+            raise RuntimeError(f"BigQuery insert failed for OST {ost_id}: {errors}")
         else:
             print(f"✅ OST insert successful for orderSellingTracking {ost_id}")
 
     except Exception as e:
         print(f"❌ Unexpected error syncing orderSellingTracking to BigQuery: {e}")
+        raise
 
 
 # OrderSellingTracking update handler: Re-added for new schema
@@ -1254,7 +1254,6 @@ def sync_order_selling_tracking_update(event: firestore_fn.Event[firestore_fn.Do
             "updatedAt": ts_to_iso(after.get("updatedAt")),
             "updatedBy": after.get("updatedBy"),
             "vat": to_numeric(after.get("vat")),
-            "version": after.get("version"),
         }
 
         upd_payload = clean_payload(upd_payload)
@@ -1264,6 +1263,7 @@ def sync_order_selling_tracking_update(event: firestore_fn.Event[firestore_fn.Do
 
     except Exception as e:
         print(f"❌ Unexpected error syncing updated orderSellingTracking to BigQuery: {e}")
+        raise
 
 
 # OrderSellingTracking delete handler

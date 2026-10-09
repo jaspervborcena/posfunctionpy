@@ -11,6 +11,7 @@ Optional args:
 """
 import sys
 import argparse
+import os
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 
@@ -20,9 +21,13 @@ from google.cloud import bigquery
 from google.oauth2 import service_account
 
 # ── Config ──────────────────────────────────────────────────────────────────
-SA_FILE      = "service-account.json"
-BQ_PROJECT   = "jasperpos-1dfd5"
-BQ_DATASET   = "tovrika_pos"
+TARGET_PROJECT = os.environ.get("TARGET_PROJECT", "jasperpos-1dfd5")
+SA_FILE      = "service-account-dev.json" if TARGET_PROJECT == "jasperpos-dev" else "service-account.json"
+BQ_PROJECT   = TARGET_PROJECT
+BQ_DATASET   = os.environ.get(
+    "TARGET_DATASET",
+    "tovrika_pos_dev" if TARGET_PROJECT == "jasperpos-dev" else "tovrika_pos"
+)
 OST_TABLE    = f"{BQ_PROJECT}.{BQ_DATASET}.ordersSellingTracking"
 FIRESTORE_COLL = "ordersSellingTracking"
 BATCH_SIZE   = 200
@@ -150,19 +155,25 @@ def main():
     )
     bq = bigquery.Client(project=BQ_PROJECT, credentials=sa_creds)
 
-    # ── Fetch existing IDs + invoice/itemCode combos from BQ to avoid duplicates ───
-    print("🔍 Fetching existing ordersSellingTrackingIds and invoice/itemCode combos from BigQuery...")
+    # ── Fetch existing IDs + invoice/itemCode/status keys from BQ ─────────────
+    print("🔍 Fetching existing ordersSellingTrackingIds and invoice/itemCode/status keys from BigQuery...")
     existing_ids = set()
-    existing_invoice_item_combos = set()
+    existing_invoice_item_status_keys = set()
     try:
-        rows = bq.query(f"SELECT ordersSellingTrackingId, invoiceNumber, itemCode FROM `{OST_TABLE}`").result()
+        rows = bq.query(
+            f"SELECT ordersSellingTrackingId, invoiceNumber, itemCode, status FROM `{OST_TABLE}`"
+        ).result()
         for row in rows:
             existing_ids.add(row.ordersSellingTrackingId)
-            # Create a tuple of (invoiceNumber, itemCode) to identify duplicates
-            if row.invoiceNumber and row.itemCode:
-                existing_invoice_item_combos.add((row.invoiceNumber, row.itemCode))
+            if row.invoiceNumber and row.itemCode and row.status:
+                existing_invoice_item_status_keys.add(
+                    (row.invoiceNumber, row.itemCode, row.status)
+                )
         print(f"   Found {len(existing_ids)} existing rows in BigQuery")
-        print(f"   Found {len(existing_invoice_item_combos)} unique invoice/itemCode combinations")
+        print(
+            f"   Found {len(existing_invoice_item_status_keys)} unique "
+            "invoice/itemCode/status keys"
+        )
     except Exception as e:
         print(f"⚠️  Could not fetch existing records (table may be empty): {e}")
 
@@ -194,12 +205,18 @@ def main():
             print(f"   ⏭️ Skipping {ost_id}: document ID already exists in BQ")
             continue
         
-        # Skip if the same invoiceNumber + itemCode combination already exists
+        # Skip only when the same invoiceNumber + itemCode + status exists.
         invoice_number = d.get("invoiceNumber")
         item_code = d.get("itemCode")
-        if invoice_number and item_code and (invoice_number, item_code) in existing_invoice_item_combos:
+        status = d.get("status")
+        invoice_item_status_key = (invoice_number, item_code, status)
+        if invoice_number and item_code and status and invoice_item_status_key in existing_invoice_item_status_keys:
             skipped += 1
-            print(f"   ⏭️ Skipping {ost_id}: duplicate detected (invoiceNumber={invoice_number}, itemCode={item_code}) already exists in BQ")
+            print(
+                f"   ⏭️ Skipping {ost_id}: duplicate detected "
+                f"(invoiceNumber={invoice_number}, itemCode={item_code}, status={status}) "
+                "already exists in BQ"
+            )
             continue
         
         payload = build_ost_payload(ost_id, d)
