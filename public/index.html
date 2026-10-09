@@ -1,357 +1,88 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="theme-color" content="#f4f5f1">
-    <title>Sales Ledger | Tovrika POS</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <script src="/__/firebase/12.3.0/firebase-app-compat.js"></script>
-    <script src="/__/firebase/12.3.0/firebase-auth-compat.js"></script>
-    <script src="/__/firebase/init.js"></script>
-    <style>
-      :root {
-        color-scheme: light;
-        --ink: #182b2a;
-        --muted: #687876;
-        --line: #d8dfd9;
-        --paper: #f4f5f1;
-        --white: #fff;
-        --green: #176b56;
-        --green-dark: #104c40;
-        --mono: "DM Mono", Consolas, monospace;
-        --sans: "Manrope", "Segoe UI", sans-serif;
-      }
-      * { box-sizing: border-box; }
-      body {
-        margin: 0;
-        min-width: 320px;
-        color: var(--ink);
-        font-family: var(--sans);
-        background-color: var(--paper);
-        background-image: linear-gradient(135deg, rgba(23,107,86,.035) 25%, transparent 25%, transparent 50%, rgba(23,107,86,.035) 50%, rgba(23,107,86,.035) 75%, transparent 75%, transparent);
-        background-size: 14px 14px;
-      }
-      button, input { font: inherit; }
-      button { cursor: pointer; }
-      .masthead {
-        min-height: 72px; display: flex; align-items: center; justify-content: space-between; gap: 20px;
-        padding: 0 clamp(20px, 5vw, 76px); color: white; background: var(--green-dark); border-bottom: 4px solid #df744f;
-      }
-      .brand { display: flex; align-items: center; gap: 12px; font-size: 14px; font-weight: 800; letter-spacing: .04em; }
-      .brand-mark { display: grid; place-items: center; width: 32px; height: 32px; color: var(--green-dark); background: #d9eee2; font: 500 13px var(--mono); }
-      .masthead-note { color: #c3d7cf; font: 11px var(--mono); text-transform: uppercase; }
-      .user-tools { display: flex; align-items: center; gap: 14px; color: #d5e3dd; font-size: 12px; }
-      main { width: min(1180px, calc(100% - 40px)); margin: 0 auto; padding: 38px 0 72px; }
-      .page-heading { padding-bottom: 25px; border-bottom: 1px solid var(--line); }
-      .eyebrow { margin: 0 0 8px; color: var(--green); font: 11px var(--mono); letter-spacing: .08em; text-transform: uppercase; }
-      h1 { margin: 0; font-size: clamp(27px, 4vw, 38px); line-height: 1.15; }
-      .subtitle { margin: 8px 0 0; color: var(--muted); font-size: 14px; }
-      .auth-panel { width: min(420px, 100%); margin: 54px auto; padding: 26px 0; border-block: 1px solid var(--line); }
-      .auth-panel h2 { margin: 0 0 8px; font-size: 20px; }
-      .auth-panel p { margin: 0 0 22px; color: var(--muted); font-size: 13px; line-height: 1.6; }
-      .filters { display: grid; grid-template-columns: minmax(180px, 1.5fr) repeat(2, minmax(145px, 1fr)) auto; align-items: end; gap: 14px; padding: 24px 0; border-bottom: 1px solid var(--line); }
-      label { display: grid; gap: 7px; color: #536561; font: 10px var(--mono); letter-spacing: .05em; text-transform: uppercase; }
-      input { width: 100%; min-height: 42px; padding: 10px 12px; color: var(--ink); background: var(--white); border: 1px solid #cbd5ce; border-radius: 2px; font: 13px var(--sans); text-transform: none; }
-      input:focus { outline: 2px solid #80b6a0; outline-offset: 1px; border-color: var(--green); }
-      .primary-button { min-height: 42px; padding: 0 18px; color: white; background: var(--green); border: 1px solid var(--green); border-radius: 2px; font-size: 12px; font-weight: 800; white-space: nowrap; }
-      .primary-button:hover:not(:disabled) { background: var(--green-dark); }
-      .secondary-button { min-height: 34px; padding: 0 12px; color: var(--green-dark); background: white; border: 1px solid var(--line); border-radius: 2px; font-size: 12px; font-weight: 700; }
-      .secondary-button:hover:not(:disabled) { border-color: var(--green); }
-      button:disabled { cursor: wait; opacity: .55; }
-      .text-button { padding: 8px 0; color: #d5e3dd; background: transparent; border: 0; font-size: 12px; font-weight: 800; }
-      .notice { min-height: 22px; margin: 14px 0 0; color: var(--muted); font-size: 12px; }
-      .notice.error { color: #a1392d; }
-      .summary-line { display: flex; justify-content: space-between; align-items: center; gap: 14px; min-height: 56px; color: var(--muted); font-size: 12px; }
-      .summary-line strong { color: var(--ink); }
-      .table-wrap { overflow-x: auto; border-top: 2px solid var(--ink); background: rgba(255,255,255,.82); }
-      table { width: 100%; border-collapse: collapse; text-align: left; }
-      th { padding: 12px 14px; color: #61716e; background: #e9ede8; font: 10px var(--mono); letter-spacing: .04em; text-transform: uppercase; white-space: nowrap; }
-      td { padding: 13px 14px; border-top: 1px solid #e5e9e4; font-size: 12px; vertical-align: top; }
-      tbody tr:hover { background: #f2f8f3; }
-      .mono { font: 11px var(--mono); }
-      .amount { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
-      .row-action { padding: 5px 0; color: var(--green); background: none; border: 0; font-size: 11px; font-weight: 800; white-space: nowrap; }
-      .row-action:hover { text-decoration: underline; }
-      .empty { padding: 42px 18px; color: var(--muted); text-align: center; font-size: 13px; }
-      .pagination { display: flex; justify-content: flex-end; align-items: center; gap: 12px; padding: 14px 0; }
-      .page-count { min-width: 74px; color: var(--muted); text-align: center; font: 11px var(--mono); }
-      .details-section { margin-top: 32px; border-top: 2px solid var(--green); }
-      .details-heading { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 16px 0; }
-      .details-heading h2 { margin: 0; font-size: 17px; }
-      .details-meta { margin-top: 4px; color: var(--muted); font: 11px var(--mono); }
-      .detail-table td { max-width: 300px; overflow-wrap: anywhere; }
-      .detail-table th { position: sticky; top: 0; }
-      [hidden] { display: none !important; }
-      @media (max-width: 760px) {
-        main { width: min(calc(100% - 28px), 600px); padding-top: 26px; }
-        .masthead { min-height: 62px; padding-inline: 16px; }
-        .masthead-note { display: none; }
-        .filters { grid-template-columns: 1fr 1fr; }
-        .filters label:first-child, .filters .primary-button { grid-column: 1 / -1; }
-        .auth-panel { margin-block: 36px; }
-        .summary-line { align-items: start; flex-direction: column; justify-content: center; padding-block: 10px; }
-      }
-      @media (max-width: 420px) {
-        .filters { grid-template-columns: 1fr; }
-        .filters label:first-child, .filters .primary-button { grid-column: auto; }
-        .user-tools { gap: 8px; font-size: 10px; }
-        td, th { padding-inline: 10px; }
+    <title>Welcome to Firebase Hosting</title>
+
+    <!-- update the version number as needed -->
+    <script defer src="/__/firebase/12.3.0/firebase-app-compat.js"></script>
+    <!-- include only the Firebase features as you need -->
+    <script defer src="/__/firebase/12.3.0/firebase-auth-compat.js"></script>
+    <script defer src="/__/firebase/12.3.0/firebase-database-compat.js"></script>
+    <script defer src="/__/firebase/12.3.0/firebase-firestore-compat.js"></script>
+    <script defer src="/__/firebase/12.3.0/firebase-functions-compat.js"></script>
+    <script defer src="/__/firebase/12.3.0/firebase-messaging-compat.js"></script>
+    <script defer src="/__/firebase/12.3.0/firebase-storage-compat.js"></script>
+    <script defer src="/__/firebase/12.3.0/firebase-analytics-compat.js"></script>
+    <script defer src="/__/firebase/12.3.0/firebase-remote-config-compat.js"></script>
+    <script defer src="/__/firebase/12.3.0/firebase-performance-compat.js"></script>
+    <!-- 
+      initialize the SDK after all desired features are loaded, set useEmulator to false
+      to avoid connecting the SDK to running emulators.
+    -->
+    <script defer src="/__/firebase/init.js?useEmulator=true"></script>
+
+    <style media="screen">
+      body { background: #ECEFF1; color: rgba(0,0,0,0.87); font-family: Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 0; }
+      #message { background: white; max-width: 360px; margin: 100px auto 16px; padding: 32px 24px; border-radius: 3px; }
+      #message h2 { color: #ffa100; font-weight: bold; font-size: 16px; margin: 0 0 8px; }
+      #message h1 { font-size: 22px; font-weight: 300; color: rgba(0,0,0,0.6); margin: 0 0 16px;}
+      #message p { line-height: 140%; margin: 16px 0 24px; font-size: 14px; }
+      #message a { display: block; text-align: center; background: #039be5; text-transform: uppercase; text-decoration: none; color: white; padding: 16px; border-radius: 4px; }
+      #message, #message a { box-shadow: 0 1px 3px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.24); }
+      #load { color: rgba(0,0,0,0.4); text-align: center; font-size: 13px; }
+      @media (max-width: 600px) {
+        body, #message { margin-top: 0; background: white; box-shadow: none; }
+        body { border-top: 16px solid #ffa100; }
       }
     </style>
   </head>
   <body>
-    <header class="masthead">
-      <div class="brand"><span class="brand-mark">TP</span><span>TOVRIKA POS</span></div>
-      <div class="masthead-note">Sales operations / Development</div>
-      <div id="user-tools" class="user-tools" hidden>
-        <span id="user-email"></span>
-        <button id="sign-out" class="text-button" type="button">Sign out</button>
-      </div>
-    </header>
-    <main>
-      <section id="sign-in-panel" class="auth-panel" hidden>
-        <p class="eyebrow">Secure access</p>
-        <h2>Sign in to sales</h2>
-        <p>Use your POS account. Your account must be active and have access to the selected store.</p>
-        <form id="sign-in-form">
-          <label>Email address<input id="email" type="email" autocomplete="username" required></label>
-          <label class="spaced-label">Password<input id="password" type="password" autocomplete="current-password" required></label>
-          <button class="primary-button full-width" type="submit">Sign in</button>
-        </form>
-        <p id="auth-notice" class="notice" role="status"></p>
-      </section>
-      <section id="dashboard" hidden>
-        <div class="page-heading">
-          <p class="eyebrow">BigQuery / Order records</p>
-          <h1>Sales ledger</h1>
-          <p class="subtitle">Review orders and inspect their item-level tracking records.</p>
-        </div>
-        <form id="filters" class="filters">
-          <label>Store ID<input id="store-id" name="storeId" autocomplete="organization" placeholder="Enter store ID" required></label>
-          <label>From<input id="from-date" name="from" type="date" required></label>
-          <label>To<input id="to-date" name="to" type="date" required></label>
-          <button id="search-button" class="primary-button" type="submit">Load orders</button>
-        </form>
-        <p id="notice" class="notice" role="status" aria-live="polite"></p>
-        <div class="summary-line">
-          <span id="result-summary">Choose a store and date range to begin.</span>
-          <span>Maximum <strong>100</strong> orders per page</span>
-        </div>
-        <div id="orders-region" class="table-wrap"><div class="empty">Orders will appear here.</div></div>
-        <nav id="pagination" class="pagination" aria-label="Order pages" hidden>
-          <button id="previous-page" class="secondary-button" type="button">Previous</button>
-          <span id="page-count" class="page-count"></span>
-          <button id="next-page" class="secondary-button" type="button">Next</button>
-        </nav>
-        <section id="details-section" class="details-section" hidden>
-          <div class="details-heading">
-            <div><h2>Order details</h2><div id="details-meta" class="details-meta"></div></div>
-            <button id="close-details" class="secondary-button" type="button">Close</button>
-          </div>
-          <div id="details-region" class="table-wrap"></div>
-        </section>
-      </section>
-    </main>
+    <div id="message">
+      <h2>Welcome</h2>
+      <h1>Firebase Hosting Setup Complete</h1>
+      <p>You're seeing this because you've successfully setup Firebase Hosting. Now it's time to go build something extraordinary!</p>
+      <a target="_blank" href="https://firebase.google.com/docs/hosting/">Open Hosting Documentation</a>
+    </div>
+    <p id="load">Firebase SDK Loading&hellip;</p>
+
     <script>
-      const API_URLS = {
-        orders: 'https://get-sales-summary-details-bq-3ao45uhsoq-de.a.run.app',
-        details: 'https://get-sales-summary-order-details-bq-3ao45uhsoq-de.a.run.app'
-      };
-      const PAGE_SIZE = 50;
-      const state = { page: 1, hasMore: false, filters: null };
-      const byId = (id) => document.getElementById(id);
-      const localDate = (date) => {
-        const offset = date.getTimezoneOffset();
-        return new Date(date.getTime() - offset * 60000).toISOString().slice(0, 10);
-      };
-      const showNotice = (message, isError = false) => {
-        const notice = byId('notice');
-        notice.textContent = message;
-        notice.classList.toggle('error', isError);
-      };
-      const setBusy = (busy) => {
-        byId('search-button').disabled = busy;
-        byId('previous-page').disabled = busy || state.page <= 1;
-        byId('next-page').disabled = busy || !state.hasMore;
-      };
-      const escapeError = (error) => {
-        if (error.status === 401) return 'Your session is no longer valid. Sign in again.';
-        if (error.status === 403) return 'You do not have access to that store.';
-        return error.message || 'The request failed. Please try again.';
-      };
-      const request = async (url, params) => {
-        const user = firebase.auth().currentUser;
-        if (!user) throw new Error('Sign in to continue.');
-        const query = new URLSearchParams(params);
-        const response = await fetch(`${url}?${query}`, {
-          headers: { Authorization: `Bearer ${await user.getIdToken()}` }
-        });
-        const payload = await response.json();
-        if (!response.ok) {
-          const error = new Error(payload.message || payload.error || `Request failed (${response.status})`);
-          error.status = response.status;
-          throw error;
-        }
-        return payload;
-      };
-      const formatValue = (value) => {
-        if (value === null || value === undefined || value === '') return '—';
-        if (typeof value === 'object') return JSON.stringify(value);
-        return String(value);
-      };
-      const makeCell = (value, className = '') => {
-        const cell = document.createElement('td');
-        cell.textContent = formatValue(value);
-        if (className) cell.className = className;
-        return cell;
-      };
-      const renderOrders = (orders) => {
-        const region = byId('orders-region');
-        region.replaceChildren();
-        if (!orders.length) {
-          const empty = document.createElement('div');
-          empty.className = 'empty';
-          empty.textContent = 'No orders matched this store and date range.';
-          region.append(empty);
-          return;
-        }
-        const table = document.createElement('table');
-        table.innerHTML = '<thead><tr><th>Order ID</th><th>Invoice</th><th>Created</th><th>Customer</th><th class="amount">Total</th><th>Status</th><th></th></tr></thead>';
-        const body = document.createElement('tbody');
-        for (const order of orders) {
-          const row = document.createElement('tr');
-          row.append(makeCell(order.orderId || '—', 'mono'));
-          row.append(makeCell(order.invoiceNumber || '—', 'mono'));
-          row.append(makeCell(order.createdAt || order.date || '—'));
-          row.append(makeCell(order.customerInfo?.fullName || '—'));
-          row.append(makeCell(order.totalAmount, 'amount'));
-          row.append(makeCell(order.status || '—'));
-          const actionCell = document.createElement('td');
-          const action = document.createElement('button');
-          action.className = 'row-action';
-          action.type = 'button';
-          action.textContent = 'View items';
-          action.disabled = !order.orderId && !order.invoiceNumber;
-          action.addEventListener('click', () => loadDetails(order));
-          actionCell.append(action);
-          row.append(actionCell);
-          body.append(row);
-        }
-        table.append(body);
-        region.append(table);
-      };
-      const renderDetails = (details) => {
-        const region = byId('details-region');
-        region.replaceChildren();
-        if (!details.length) {
-          const empty = document.createElement('div');
-          empty.className = 'empty';
-          empty.textContent = 'No item records were found for this order.';
-          region.append(empty);
-          return;
-        }
-        const keys = [...new Set(details.flatMap((item) => Object.keys(item)))];
-        const table = document.createElement('table');
-        table.className = 'detail-table';
-        const head = document.createElement('thead');
-        const headerRow = document.createElement('tr');
-        for (const key of keys) {
-          const cell = document.createElement('th');
-          cell.textContent = key;
-          headerRow.append(cell);
-        }
-        head.append(headerRow);
-        const body = document.createElement('tbody');
-        for (const detail of details) {
-          const row = document.createElement('tr');
-          for (const key of keys) row.append(makeCell(detail[key]));
-          body.append(row);
-        }
-        table.append(head, body);
-        region.append(table);
-      };
-      const loadOrders = async () => {
-        if (!state.filters) return;
-        setBusy(true);
-        showNotice('Loading orders…');
+      document.addEventListener('DOMContentLoaded', function() {
+        const loadEl = document.querySelector('#load');
+        // // 🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥
+        // // The Firebase SDK is initialized and available here!
+        //
+        // firebase.auth().onAuthStateChanged(user => { });
+        // firebase.database().ref('/path/to/ref').on('value', snapshot => { });
+        // firebase.firestore().doc('/foo/bar').get().then(() => { });
+        // firebase.functions().httpsCallable('yourFunction')().then(() => { });
+        // firebase.messaging().requestPermission().then(() => { });
+        // firebase.storage().ref('/path/to/ref').getDownloadURL().then(() => { });
+        // firebase.analytics(); // call to activate
+        // firebase.analytics().logEvent('tutorial_completed');
+        // firebase.performance(); // call to activate
+        //
+        // // 🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥
+
         try {
-          const result = await request(API_URLS.orders, {
-            ...state.filters,
-            page_number: String(state.page),
-            page_size: String(PAGE_SIZE)
-          });
-          state.hasMore = result.has_more;
-          renderOrders(result.orders || []);
-          byId('result-summary').textContent = `${result.count} orders on this page`;
-          byId('page-count').textContent = `Page ${state.page}`;
-          byId('pagination').hidden = state.page === 1 && !state.hasMore;
-          showNotice('');
-        } catch (error) {
-          showNotice(escapeError(error), true);
-        } finally {
-          setBusy(false);
+          let app = firebase.app();
+          let features = [
+            'auth', 
+            'database', 
+            'firestore',
+            'functions',
+            'messaging', 
+            'storage', 
+            'analytics', 
+            'remoteConfig',
+            'performance',
+          ].filter(feature => typeof app[feature] === 'function');
+          loadEl.textContent = `Firebase SDK loaded with ${features.join(', ')}`;
+        } catch (e) {
+          console.error(e);
+          loadEl.textContent = 'Error loading the Firebase SDK, check the console.';
         }
-      };
-      const loadDetails = async (order) => {
-        const section = byId('details-section');
-        section.hidden = false;
-        byId('details-region').textContent = 'Loading item records…';
-        byId('details-meta').textContent = order.invoiceNumber || order.orderId;
-        section.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        try {
-          const identifier = order.orderId ? { orderId: order.orderId } : { invoiceNumber: order.invoiceNumber };
-          const result = await request(API_URLS.details, identifier);
-          renderDetails(result.details || []);
-        } catch (error) {
-          byId('details-region').textContent = escapeError(error);
-        }
-      };
-      byId('from-date').value = localDate(new Date(Date.now() - 6 * 86400000));
-      byId('to-date').value = localDate(new Date());
-      byId('sign-in-form').addEventListener('submit', async (event) => {
-        event.preventDefault();
-        const notice = byId('auth-notice');
-        notice.classList.remove('error');
-        notice.textContent = 'Signing in…';
-        try {
-          await firebase.auth().signInWithEmailAndPassword(byId('email').value, byId('password').value);
-          byId('password').value = '';
-        } catch (error) {
-          notice.textContent = error.message || 'Unable to sign in.';
-          notice.classList.add('error');
-        }
-      });
-      byId('sign-out').addEventListener('click', () => firebase.auth().signOut());
-      byId('filters').addEventListener('submit', (event) => {
-        event.preventDefault();
-        state.filters = {
-          storeId: byId('store-id').value.trim(),
-          from: byId('from-date').value,
-          to: byId('to-date').value
-        };
-        if (state.filters.from > state.filters.to) {
-          showNotice('The start date must be on or before the end date.', true);
-          return;
-        }
-        state.page = 1;
-        byId('details-section').hidden = true;
-        loadOrders();
-      });
-      byId('previous-page').addEventListener('click', () => {
-        if (state.page > 1) { state.page -= 1; loadOrders(); }
-      });
-      byId('next-page').addEventListener('click', () => {
-        if (state.hasMore) { state.page += 1; loadOrders(); }
-      });
-      byId('close-details').addEventListener('click', () => { byId('details-section').hidden = true; });
-      firebase.auth().onAuthStateChanged((user) => {
-        byId('sign-in-panel').hidden = Boolean(user);
-        byId('dashboard').hidden = !user;
-        byId('user-tools').hidden = !user;
-        byId('user-email').textContent = user?.email || '';
       });
     </script>
   </body>
