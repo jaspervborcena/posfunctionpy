@@ -28,6 +28,8 @@ def create_ordersellingtracking_table():
         bigquery.SchemaField("cashierId", "STRING"),
         bigquery.SchemaField("cashierName", "STRING"),
         bigquery.SchemaField("companyId", "STRING"),
+        bigquery.SchemaField("customerId", "STRING"),
+        bigquery.SchemaField("category", "STRING"),
         bigquery.SchemaField("cost", "FLOAT64"),
         bigquery.SchemaField("createdAt", "TIMESTAMP"),
         bigquery.SchemaField("createdBy", "STRING"),
@@ -51,6 +53,11 @@ def create_ordersellingtracking_table():
         bigquery.SchemaField("total", "FLOAT64"),
         bigquery.SchemaField("isVatExempt", "BOOLEAN"),
         bigquery.SchemaField("orderDetailsId", "STRING"),
+        bigquery.SchemaField("invoiceNumber", "STRING"),
+        bigquery.SchemaField("productCode", "STRING"),
+        bigquery.SchemaField("skuId", "STRING"),
+        bigquery.SchemaField("tagLabels", "STRING", mode="REPEATED"),
+        bigquery.SchemaField("tags", "STRING", mode="REPEATED"),
     ]
     
     # Create the table with partitioning and clustering

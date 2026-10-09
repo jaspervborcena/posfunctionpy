@@ -32,7 +32,6 @@ venv/
 __pycache__/
 *.pyc
 
-# IMPORTANT: Do NOT include the production service account in dev deployments
-# Keep the dev service account available for local testing/deploys
+# Service account keys are for local scripts only; never upload them with functions.
 service-account.json
-!service-account-dev.json
+service-account-dev.json
