@@ -613,6 +613,59 @@ def get_sales_summary_details_bq(req: https_fn.Request) -> https_fn.Response:
 
 @https_fn.on_request(region="asia-east1")
 @require_auth
+def get_recon_summary_bq(req: https_fn.Request) -> https_fn.Response:
+    """Return stock-tracked order-selling-tracking rows for a store and date range."""
+    error_response, context = _sales_dashboard_request(req)
+    if error_response:
+        return error_response
+
+    try:
+        query = """
+        SELECT *
+        FROM `%s`
+        WHERE storeId = @store_id
+          AND isStockTracked = TRUE
+          AND createdAt >= @start_timestamp
+          AND createdAt < @end_timestamp
+        ORDER BY createdAt DESC, orderId
+        """ % get_bigquery_table_name("ordersSellingTracking")
+        job_config = bigquery.QueryJobConfig(query_parameters=[
+            bigquery.ScalarQueryParameter("store_id", "STRING", context["store_id"]),
+            bigquery.ScalarQueryParameter("start_timestamp", "TIMESTAMP", context["start"]),
+            bigquery.ScalarQueryParameter("end_timestamp", "TIMESTAMP", context["end"])
+        ])
+        client = get_bigquery_client()
+        rows = [_json_safe(dict(row)) for row in client.query(query, job_config=job_config).result()]
+
+        return https_fn.Response(json.dumps({
+            "success": True,
+            "store_id": context["store_id"],
+            "from": context["from"],
+            "to": context["to"],
+            "count": len(rows),
+            "rows": rows
+        }), status=200, headers=DEFAULT_HEADERS)
+    except Exception as e:
+        print(f"❌ Reconciliation summary BigQuery error: {e}")
+        return https_fn.Response(
+            json.dumps({
+                "success": False,
+                "error": str(e),
+                "message": "Failed to query reconciliation summary"
+            }),
+            status=500,
+            headers=DEFAULT_HEADERS
+        )
+
+
+@https_fn.on_request(region="asia-east1")
+def get_sales_orders_bq(req: https_fn.Request) -> https_fn.Response:
+    """Compatibility route used by the production sales summary page."""
+    return get_sales_summary_details_bq(req)
+
+
+@https_fn.on_request(region="asia-east1")
+@require_auth
 def get_sales_summary_order_details_bq(req: https_fn.Request) -> https_fn.Response:
     """Return all order-selling-tracking rows for one order or invoice."""
     if req.method == 'OPTIONS':

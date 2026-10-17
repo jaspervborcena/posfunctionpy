@@ -1191,6 +1191,72 @@ def sync_order_selling_tracking_to_bigquery(event: firestore_fn.Event[firestore_
         raise
 
 
+# InventoryTracking: create handler
+@firestore_fn.on_document_created(document="inventoryTracking/{inventoryTrackingId}", region="asia-east1")
+def sync_inventory_tracking_to_bigquery(event: firestore_fn.Event[firestore_fn.DocumentSnapshot]) -> None:
+    print("🔥 Firestore trigger activated for new inventoryTracking - BigQuery sync")
+
+    inventory_tracking_id = event.params["inventoryTrackingId"]
+    data = event.data.to_dict()
+    if not data:
+        print(f"⚠️ InventoryTracking document {inventory_tracking_id} is empty")
+        return
+
+    table_name = get_bigquery_table_name("inventoryTracking")
+
+    try:
+        client = get_bigquery_client()
+        payload = clean_payload({
+            "inventoryTrackingId": inventory_tracking_id,
+            "batchId": data.get("batchId"),
+            "companyId": data.get("companyId"),
+            "costPrice": to_numeric(data.get("costPrice")),
+            "createdAt": ts_to_iso(data.get("createdAt")),
+            "createdBy": data.get("createdBy"),
+            "deductedAt": ts_to_iso(data.get("deductedAt")),
+            "deductedBy": data.get("deductedBy"),
+            "eventType": data.get("eventType"),
+            "invoiceNumber": data.get("invoiceNumber"),
+            "note": data.get("note"),
+            "orderId": data.get("orderId"),
+            "productCode": data.get("productCode"),
+            "productId": data.get("productId"),
+            "productName": data.get("productName"),
+            "quantity": to_int(data.get("quantity")),
+            "refId": data.get("refId"),
+            "runningBalanceTotalStock": to_int(data.get("runningBalanceTotalStock")),
+            "skuId": data.get("skuId"),
+            "storeId": data.get("storeId"),
+        })
+
+        check_query = f"""
+            SELECT COUNT(*) AS count
+            FROM `{table_name}`
+            WHERE inventoryTrackingId = @inventoryTrackingId
+        """
+        check_config = bigquery.QueryJobConfig(query_parameters=[
+            bigquery.ScalarQueryParameter("inventoryTrackingId", "STRING", inventory_tracking_id)
+        ])
+        existing = next(iter(client.query(check_query, job_config=check_config).result()), None)
+        if existing and existing.count:
+            print(f"⏭️ InventoryTracking {inventory_tracking_id} already exists; skipping retry")
+            return
+
+        errors = client.insert_rows_json(
+            client.get_table(table_name),
+            [payload],
+            row_ids=[inventory_tracking_id]
+        )
+        if errors:
+            raise RuntimeError(
+                f"BigQuery insert failed for inventoryTracking {inventory_tracking_id}: {errors}"
+            )
+        print(f"✅ InventoryTracking insert successful for {inventory_tracking_id}")
+    except Exception as e:
+        print(f"❌ Unexpected error syncing inventoryTracking to BigQuery: {e}")
+        raise
+
+
 # OrderSellingTracking update handler: Re-added for new schema
 @firestore_fn.on_document_updated(document="ordersSellingTracking/{orderSellingTrackingId}", region="asia-east1")
 def sync_order_selling_tracking_update(event: firestore_fn.Event[firestore_fn.DocumentSnapshot]) -> None:
