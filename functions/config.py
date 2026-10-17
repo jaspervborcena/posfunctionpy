@@ -144,7 +144,8 @@ def get_bq_tables():
         "orders": get_bigquery_table_name("orders"),
         "orderDetails": get_bigquery_table_name("orderDetails"),
         "products": get_bigquery_table_name("products"),
-        "ordersSellingTracking": get_bigquery_table_name("ordersSellingTracking")
+        "ordersSellingTracking": get_bigquery_table_name("ordersSellingTracking"),
+        "inventoryTracking": get_bigquery_table_name("inventoryTracking")
     }
 
 # For backward compatibility
@@ -154,7 +155,8 @@ BQ_TABLES = get_bq_tables()
 COLLECTIONS = {
     "orders": ORDERS_COLLECTION,
     "orderDetails": ORDER_DETAILS_COLLECTION,
-    "products": "products"
+    "products": "products",
+    "inventoryTracking": "inventoryTracking"
 }
 
 # Canonical BigQuery field names mapping (logical -> actual column name)

@@ -10,6 +10,7 @@ Deployed endpoints:
 	- get_orders_by_date_bq (asia-east1)
 	- get_sales_summary_details_bq (asia-east1)
 	- get_sales_summary_order_details_bq (asia-east1)
+	- get_recon_summary_bq (asia-east1): stock-tracked order-selling-tracking rows by store and date range
 - Firestore → BigQuery Triggers
 	- sync_order_to_bigquery (asia-east1)
 	- sync_order_details_to_bigquery (asia-east1)
@@ -26,3 +27,4 @@ Deployed endpoints:
 
 Docs:
 - docs/cloud-logging-endpoint.md — contract, examples, and configuration for `app_logs`
+- docs/uiguide.md — Angular integration guide for `get_recon_summary_bq`

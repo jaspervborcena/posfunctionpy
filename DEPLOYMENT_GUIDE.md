@@ -29,7 +29,7 @@ firebase projects:list
 firebase deploy --only functions
 
 # 4. (Optional) Deploy specific function only
-firebase deploy --only functions:sales_summary_by_store
+firebase deploy --only functions:get_recon_summary_bq
 ```
 
 ### What Happens in DEV Deployment:
@@ -54,7 +54,7 @@ firebase projects:list
 firebase deploy --only functions
 
 # 4. (Optional) Deploy specific function only
-firebase deploy --only functions:sales_summary_by_store
+firebase deploy --only functions:get_recon_summary_bq
 ```
 
 ### What Happens in PROD Deployment:
@@ -125,12 +125,14 @@ firebase functions:log
 
 # DEV
 curl -H "Authorization: Bearer YOUR_TOKEN" \
-  "https://asia-east1-jasperpos-dev.cloudfunctions.net/sales_summary_by_store?storeId=YOUR_STORE"
+  "https://asia-east1-jasperpos-dev.cloudfunctions.net/get_recon_summary_bq?storeId=YOUR_STORE&from=2026-10-01&to=2026-10-17"
 
 # PROD
 curl -H "Authorization: Bearer YOUR_TOKEN" \
-  "https://asia-east1-jasperpos-1dfd5.cloudfunctions.net/sales_summary_by_store?storeId=YOUR_STORE"
+  "https://asia-east1-jasperpos-1dfd5.cloudfunctions.net/get_recon_summary_bq?storeId=YOUR_STORE&from=2026-10-01&to=2026-10-17"
 ```
+
+The reconciliation endpoint returns all `ordersSellingTracking` rows with `isStockTracked = TRUE` for the requested store and date range. Date-only `to` values include that entire UTC calendar day. See [docs/uiguide.md](docs/uiguide.md) for the request and response contract and Angular integration example.
 
 ### 3. Verify Environment Detection
 
