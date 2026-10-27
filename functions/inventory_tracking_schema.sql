@@ -9,6 +9,8 @@ CREATE TABLE IF NOT EXISTS `jasperpos-1dfd5.tovrika_pos.inventoryTracking` (
   deductedBy STRING,
   eventType STRING,
   invoiceNumber STRING,
+  itemCode STRING,
+  isStockTracked BOOL,
   note STRING,
   orderId STRING,
   productCode STRING,
@@ -17,7 +19,11 @@ CREATE TABLE IF NOT EXISTS `jasperpos-1dfd5.tovrika_pos.inventoryTracking` (
   quantity INT64,
   refId STRING,
   runningBalanceTotalStock INT64,
+  saleLineIndex INT64,
+  saleTrackingId STRING,
+  sellingPrice NUMERIC,
   skuId STRING,
+  stockMovement BOOL,
   storeId STRING
 )
 PARTITION BY DATE(createdAt)
@@ -34,6 +40,8 @@ CREATE TABLE IF NOT EXISTS `jasperpos-dev.tovrika_pos_dev.inventoryTracking` (
   deductedBy STRING,
   eventType STRING,
   invoiceNumber STRING,
+  itemCode STRING,
+  isStockTracked BOOL,
   note STRING,
   orderId STRING,
   productCode STRING,
@@ -42,7 +50,11 @@ CREATE TABLE IF NOT EXISTS `jasperpos-dev.tovrika_pos_dev.inventoryTracking` (
   quantity INT64,
   refId STRING,
   runningBalanceTotalStock INT64,
+  saleLineIndex INT64,
+  saleTrackingId STRING,
+  sellingPrice NUMERIC,
   skuId STRING,
+  stockMovement BOOL,
   storeId STRING
 )
 PARTITION BY DATE(createdAt)

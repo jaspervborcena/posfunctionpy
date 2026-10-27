@@ -20,6 +20,7 @@ from bigquery_triggers import (
 )
 from bigquery_api_endpoints import (
     get_sales_summary_bq,
+    get_inventory_summary_bq,
     get_sales_summary_details_bq,
     get_recon_summary_bq,
     get_sales_orders_bq,
@@ -44,6 +45,7 @@ __all__ = [
     "sync_order_details_update",
     "sync_order_details_delete",
     "get_sales_summary_bq",
+    "get_inventory_summary_bq",
     "get_sales_summary_details_bq",
     "get_recon_summary_bq",
     "get_sales_orders_bq",
