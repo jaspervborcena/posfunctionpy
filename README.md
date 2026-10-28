@@ -9,6 +9,7 @@ Deployed endpoints:
 	- get_order_details_bq (asia-east1)
 	- get_orders_by_date_bq (asia-east1)
 	- get_sales_summary_details_bq (asia-east1)
+	- salesSummaryDetailsProxy (asia-east1): compatibility alias for the sales summary UI
 	- get_sales_summary_order_details_bq (asia-east1)
 	- get_recon_summary_bq (asia-east1): stock-tracked order-selling-tracking rows by store and date range
 	- get_inventory_summary_bq (asia-east1): inventory-tracking rows by store and creation date range

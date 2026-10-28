@@ -775,6 +775,12 @@ def get_sales_orders_bq(req: https_fn.Request) -> https_fn.Response:
 
 
 @https_fn.on_request(region="asia-east1")
+def salesSummaryDetailsProxy(req: https_fn.Request) -> https_fn.Response:
+    """Compatibility route for clients using the legacy proxy endpoint name."""
+    return get_sales_summary_details_bq(req)
+
+
+@https_fn.on_request(region="asia-east1")
 @require_auth
 def get_sales_summary_order_details_bq(req: https_fn.Request) -> https_fn.Response:
     """Return all order-selling-tracking rows for one order or invoice."""
