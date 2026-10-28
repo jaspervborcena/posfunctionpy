@@ -1217,6 +1217,8 @@ def sync_inventory_tracking_to_bigquery(event: firestore_fn.Event[firestore_fn.D
             "deductedBy": data.get("deductedBy"),
             "eventType": data.get("eventType"),
             "invoiceNumber": data.get("invoiceNumber"),
+            "itemCode": data.get("itemCode"),
+            "isStockTracked": bool(data.get("isStockTracked", False)),
             "note": data.get("note"),
             "orderId": data.get("orderId"),
             "productCode": data.get("productCode"),
@@ -1225,7 +1227,11 @@ def sync_inventory_tracking_to_bigquery(event: firestore_fn.Event[firestore_fn.D
             "quantity": to_int(data.get("quantity")),
             "refId": data.get("refId"),
             "runningBalanceTotalStock": to_int(data.get("runningBalanceTotalStock")),
+            "saleLineIndex": to_int(data.get("saleLineIndex")),
+            "saleTrackingId": data.get("saleTrackingId"),
+            "sellingPrice": to_numeric(data.get("sellingPrice")),
             "skuId": data.get("skuId"),
+            "stockMovement": bool(data.get("stockMovement", False)),
             "storeId": data.get("storeId"),
         })
 

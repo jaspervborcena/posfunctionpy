@@ -461,6 +461,116 @@ def get_sales_summary_bq(req: https_fn.Request) -> https_fn.Response:
         )
 
 
+# API endpoint to get inventory tracking rows from BigQuery
+@https_fn.on_request(region="asia-east1")
+@require_auth
+def get_inventory_summary_bq(req: https_fn.Request) -> https_fn.Response:
+    """Return all inventory-tracking fields for a store and creation date range."""
+    if req.method == 'OPTIONS':
+        headers = {
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET',
+            'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+            'Access-Control-Max-Age': '3600'
+        }
+        return https_fn.Response('', status=204, headers=headers)
+
+    store_id = req.args.get('storeId')
+    from_date_param = req.args.get('from')
+    to_date_param = req.args.get('to')
+
+    if not store_id:
+        return https_fn.Response(
+            json.dumps({"error": "storeId parameter is required"}),
+            status=400,
+            headers=DEFAULT_HEADERS
+        )
+
+    if not from_date_param or not to_date_param:
+        return https_fn.Response(
+            json.dumps({"error": "from and to parameters are required (format YYYYMMDDHHMMSS)"}),
+            status=400,
+            headers=DEFAULT_HEADERS
+        )
+
+    if (len(from_date_param) != 14 or not from_date_param.isdigit() or
+            len(to_date_param) != 14 or not to_date_param.isdigit()):
+        return https_fn.Response(
+            json.dumps({"error": "Invalid date format. Use YYYYMMDDHHMMSS (14 digits)"}),
+            status=400,
+            headers=DEFAULT_HEADERS
+        )
+
+    from_date = parse_datetime_string(from_date_param)
+    to_date = parse_datetime_string(to_date_param)
+    if not from_date or not to_date:
+        return https_fn.Response(
+            json.dumps({"error": "Invalid date format. Use YYYYMMDDHHMMSS (14 digits)"}),
+            status=400,
+            headers=DEFAULT_HEADERS
+        )
+
+    if from_date > to_date:
+        return https_fn.Response(
+            json.dumps({"error": "from date cannot be later than to date"}),
+            status=400,
+            headers=DEFAULT_HEADERS
+        )
+
+    from auth_middleware import check_store_access, extract_user_permissions
+    has_access, access_error = check_store_access(req.user, store_id)
+    if not has_access:
+        perms = extract_user_permissions(req.user)
+        return https_fn.Response(
+            json.dumps({
+                "success": False,
+                "error": "Access denied",
+                "message": access_error,
+                "requested_store": store_id,
+                "user_store": perms.get('storeId')
+            }),
+            status=403,
+            headers=DEFAULT_HEADERS
+        )
+
+    try:
+        query = """
+            SELECT *
+            FROM `%s`
+            WHERE storeId = @storeId
+              AND createdAt >= @startDate
+              AND createdAt < TIMESTAMP_ADD(@endDate, INTERVAL 1 SECOND)
+            ORDER BY createdAt DESC
+        """ % get_bigquery_table_name("inventoryTracking")
+        job_config = bigquery.QueryJobConfig(query_parameters=[
+            bigquery.ScalarQueryParameter("storeId", "STRING", store_id),
+            bigquery.ScalarQueryParameter("startDate", "TIMESTAMP", from_date),
+            bigquery.ScalarQueryParameter("endDate", "TIMESTAMP", to_date)
+        ])
+        client = get_bigquery_client()
+        rows = [_json_safe(dict(row)) for row in client.query(query, job_config=job_config).result()]
+
+        return https_fn.Response(json.dumps({
+            "success": True,
+            "storeId": store_id,
+            "from": from_date_param,
+            "to": to_date_param,
+            "count": len(rows),
+            "inventory": rows
+        }), status=200, headers=DEFAULT_HEADERS)
+    except Exception as e:
+        print(f"❌ BigQuery inventory summary query error: {str(e)}")
+        return https_fn.Response(
+            json.dumps({
+                "success": False,
+                "error": str(e),
+                "message": "Failed to query inventory summary from BigQuery"
+            }),
+            status=500,
+            headers=DEFAULT_HEADERS
+        )
+
+
 def _sales_dashboard_request(req):
     """Validate common sales dashboard parameters and return query context."""
     if req.method == 'OPTIONS':
@@ -661,6 +771,12 @@ def get_recon_summary_bq(req: https_fn.Request) -> https_fn.Response:
 @https_fn.on_request(region="asia-east1")
 def get_sales_orders_bq(req: https_fn.Request) -> https_fn.Response:
     """Compatibility route used by the production sales summary page."""
+    return get_sales_summary_details_bq(req)
+
+
+@https_fn.on_request(region="asia-east1")
+def salesSummaryDetailsProxy(req: https_fn.Request) -> https_fn.Response:
+    """Compatibility route for clients using the legacy proxy endpoint name."""
     return get_sales_summary_details_bq(req)
 
 
