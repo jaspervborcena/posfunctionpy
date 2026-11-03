@@ -724,28 +724,146 @@ def get_sales_summary_details_bq(req: https_fn.Request) -> https_fn.Response:
 @https_fn.on_request(region="asia-east1")
 @require_auth
 def get_recon_summary_bq(req: https_fn.Request) -> https_fn.Response:
-    """Return stock-tracked order-selling-tracking rows for a store and date range."""
+    """Return invoice-level inventory exceptions for a store and date range."""
     error_response, context = _sales_dashboard_request(req)
     if error_response:
         return error_response
 
     try:
         query = """
-        SELECT *
-        FROM `%s`
-        WHERE storeId = @store_id
-          AND isStockTracked = TRUE
-          AND createdAt >= @start_timestamp
-          AND createdAt < @end_timestamp
-        ORDER BY createdAt DESC, orderId
-        """ % get_bigquery_table_name("ordersSellingTracking")
+        WITH sales AS (
+            SELECT
+                storeId,
+                invoiceNumber,
+                itemCode,
+                createdAt,
+                cashierName,
+                total,
+                quantity
+            FROM `%s`
+            WHERE storeId = @store_id
+              AND isStockTracked = TRUE
+              AND invoiceNumber IS NOT NULL
+              AND createdAt >= @start_timestamp
+              AND createdAt < @end_timestamp
+        ),
+        sales_invoices AS (
+            SELECT
+                storeId,
+                invoiceNumber,
+                MIN(createdAt) AS createdAt,
+                ANY_VALUE(cashierName) AS cashierName,
+                SUM(COALESCE(total, 0)) AS totalAmount,
+                COUNT(*) AS itemCount,
+                SUM(COALESCE(quantity, 0)) AS salesQty
+            FROM sales
+            GROUP BY storeId, invoiceNumber
+        ),
+        sales_items AS (
+            SELECT
+                storeId,
+                invoiceNumber,
+                itemCode,
+                SUM(COALESCE(quantity, 0)) AS salesQty
+            FROM sales
+            GROUP BY storeId, invoiceNumber, itemCode
+        ),
+        inventory_items AS (
+            SELECT
+                storeId,
+                invoiceNumber,
+                itemCode,
+                SUM(COALESCE(quantity, 0)) AS inventoryQty,
+                COUNT(*) AS inventoryRows
+            FROM `%s`
+            WHERE storeId = @store_id
+              AND isStockTracked = TRUE
+              AND invoiceNumber IS NOT NULL
+              AND invoiceNumber IN (SELECT invoiceNumber FROM sales)
+            GROUP BY storeId, invoiceNumber, itemCode
+        ),
+        inventory_invoices AS (
+            SELECT
+                storeId,
+                invoiceNumber,
+                SUM(inventoryQty) AS inventoryQty
+            FROM inventory_items
+            GROUP BY storeId, invoiceNumber
+        ),
+        item_checks AS (
+            SELECT
+                COALESCE(s.storeId, i.storeId) AS storeId,
+                COALESCE(s.invoiceNumber, i.invoiceNumber) AS invoiceNumber,
+                s.salesQty,
+                i.inventoryRows,
+                i.inventoryQty
+            FROM sales_items AS s
+            FULL OUTER JOIN inventory_items AS i
+              ON i.storeId = s.storeId
+             AND i.invoiceNumber = s.invoiceNumber
+             AND i.itemCode IS NOT DISTINCT FROM s.itemCode
+        ),
+        issue_summary AS (
+            SELECT
+                storeId,
+                invoiceNumber,
+                COUNTIF(salesQty IS NOT NULL AND inventoryRows IS NULL)
+                    AS missingInventoryItemCount,
+                COUNTIF(
+                    inventoryRows IS NOT NULL
+                    AND (salesQty IS NULL OR salesQty != inventoryQty)
+                ) AS quantityMismatchItemCount
+            FROM item_checks
+            GROUP BY storeId, invoiceNumber
+        )
+        SELECT
+            s.invoiceNumber,
+            s.createdAt,
+            s.cashierName,
+            s.totalAmount,
+            s.itemCount,
+            s.salesQty,
+            COALESCE(i.inventoryQty, 0) AS inventoryQty,
+            x.missingInventoryItemCount,
+            x.quantityMismatchItemCount
+        FROM sales_invoices AS s
+        JOIN issue_summary AS x
+          ON x.storeId = s.storeId
+         AND x.invoiceNumber = s.invoiceNumber
+        LEFT JOIN inventory_invoices AS i
+          ON i.storeId = s.storeId
+         AND i.invoiceNumber = s.invoiceNumber
+        WHERE x.missingInventoryItemCount > 0
+           OR x.quantityMismatchItemCount > 0
+        ORDER BY s.createdAt DESC, s.invoiceNumber
+        """ % (
+            get_bigquery_table_name("ordersSellingTracking"),
+            get_bigquery_table_name("inventoryTracking")
+        )
         job_config = bigquery.QueryJobConfig(query_parameters=[
             bigquery.ScalarQueryParameter("store_id", "STRING", context["store_id"]),
             bigquery.ScalarQueryParameter("start_timestamp", "TIMESTAMP", context["start"]),
             bigquery.ScalarQueryParameter("end_timestamp", "TIMESTAMP", context["end"])
         ])
         client = get_bigquery_client()
-        rows = [_json_safe(dict(row)) for row in client.query(query, job_config=job_config).result()]
+        rows = []
+        for row in client.query(query, job_config=job_config).result():
+            recon_row = _json_safe(dict(row))
+            missing_count = int(recon_row["missingInventoryItemCount"] or 0)
+            mismatch_count = int(recon_row["quantityMismatchItemCount"] or 0)
+            issues = []
+            if missing_count:
+                issues.append("NO_INVENTORY")
+            if mismatch_count:
+                issues.append("QTY_MISMATCH")
+
+            recon_row.update({
+                "hasInventoryIssue": True,
+                "issues": issues,
+                "issueType": "MULTIPLE" if len(issues) > 1 else issues[0],
+                "severity": "critical" if missing_count else "high"
+            })
+            rows.append(recon_row)
 
         return https_fn.Response(json.dumps({
             "success": True,
@@ -762,6 +880,154 @@ def get_recon_summary_bq(req: https_fn.Request) -> https_fn.Response:
                 "success": False,
                 "error": str(e),
                 "message": "Failed to query reconciliation summary"
+            }),
+            status=500,
+            headers=DEFAULT_HEADERS
+        )
+
+
+@https_fn.on_request(region="asia-east1")
+@require_auth
+def get_recon_invoice_details_bq(req: https_fn.Request) -> https_fn.Response:
+    """Return item-level sales/inventory comparisons for one invoice."""
+    if req.method == 'OPTIONS':
+        return https_fn.Response('', status=204, headers=DEFAULT_HEADERS)
+
+    store_id = req.args.get("storeId")
+    invoice_number = req.args.get("invoiceNumber")
+    if not store_id or not invoice_number:
+        return https_fn.Response(
+            json.dumps({"error": "storeId and invoiceNumber parameters are required"}),
+            status=400,
+            headers=DEFAULT_HEADERS
+        )
+
+    from auth_middleware import check_store_access
+    has_access, access_error = check_store_access(req.user, store_id)
+    if not has_access:
+        return https_fn.Response(
+            json.dumps({
+                "success": False,
+                "error": "Access denied",
+                "message": access_error,
+                "requested_store": store_id
+            }),
+            status=403,
+            headers=DEFAULT_HEADERS
+        )
+
+    try:
+        query = """
+        WITH sales_items AS (
+            SELECT
+                storeId,
+                invoiceNumber,
+                itemCode,
+                ANY_VALUE(productName) AS productName,
+                SUM(COALESCE(quantity, 0)) AS salesQty,
+                SUM(COALESCE(total, 0)) AS salesAmount,
+                COUNT(*) AS salesLineCount
+            FROM `%s`
+            WHERE storeId = @store_id
+              AND invoiceNumber = @invoice_number
+              AND isStockTracked = TRUE
+            GROUP BY storeId, invoiceNumber, itemCode
+        ),
+        inventory_items AS (
+            SELECT
+                storeId,
+                invoiceNumber,
+                itemCode,
+                ANY_VALUE(productName) AS productName,
+                SUM(COALESCE(quantity, 0)) AS inventoryQty,
+                ARRAY_AGG(
+                    STRUCT(
+                        inventoryTrackingId,
+                        batchId,
+                        eventType,
+                        quantity,
+                        createdAt,
+                        deductedAt,
+                        itemCode,
+                        productCode,
+                        productId,
+                        productName,
+                        runningBalanceTotalStock,
+                        saleLineIndex,
+                        saleTrackingId,
+                        stockMovement
+                    )
+                    ORDER BY createdAt DESC
+                ) AS inventoryRows
+            FROM `%s`
+            WHERE storeId = @store_id
+              AND invoiceNumber = @invoice_number
+              AND isStockTracked = TRUE
+            GROUP BY storeId, invoiceNumber, itemCode
+        )
+        SELECT
+            s.invoiceNumber,
+            COALESCE(s.itemCode, i.itemCode) AS itemCode,
+            COALESCE(s.productName, i.productName) AS productName,
+            s.salesQty,
+            s.salesAmount,
+            s.salesLineCount,
+            i.inventoryQty,
+            i.inventoryRows,
+            CASE
+                WHEN i.inventoryRows IS NULL THEN 'NO_INVENTORY'
+                WHEN s.salesQty != i.inventoryQty THEN 'QTY_MISMATCH'
+                ELSE 'OK'
+            END AS issueType
+        FROM sales_items AS s
+        LEFT JOIN inventory_items AS i
+          ON i.storeId = s.storeId
+         AND i.invoiceNumber = s.invoiceNumber
+         AND i.itemCode IS NOT DISTINCT FROM s.itemCode
+        ORDER BY productName, itemCode
+        """ % (
+            get_bigquery_table_name("ordersSellingTracking"),
+            get_bigquery_table_name("inventoryTracking")
+        )
+        job_config = bigquery.QueryJobConfig(query_parameters=[
+            bigquery.ScalarQueryParameter("store_id", "STRING", store_id),
+            bigquery.ScalarQueryParameter("invoice_number", "STRING", invoice_number)
+        ])
+        client = get_bigquery_client()
+        rows = []
+        for row in client.query(query, job_config=job_config).result():
+            detail = dict(row)
+            detail["inventoryQty"] = int(detail["inventoryQty"] or 0)
+            detail["salesQty"] = int(detail["salesQty"] or 0)
+            detail["salesLineCount"] = int(detail["salesLineCount"] or 0)
+            detail["inventoryRows"] = _json_safe(detail.get("inventoryRows") or [])
+            detail["quantityDifference"] = detail["inventoryQty"] - detail["salesQty"]
+            rows.append(_json_safe(detail))
+
+        if not rows:
+            return https_fn.Response(
+                json.dumps({
+                    "success": False,
+                    "error": "Invoice details not found"
+                }),
+                status=404,
+                headers=DEFAULT_HEADERS
+            )
+
+        return https_fn.Response(json.dumps({
+            "success": True,
+            "storeId": store_id,
+            "invoiceNumber": invoice_number,
+            "count": len(rows),
+            "items": rows
+        }), status=200, headers=DEFAULT_HEADERS)
+    except Exception as e:
+        print(f"❌ Reconciliation invoice details BigQuery error: {e}")
+        return https_fn.Response(
+            json.dumps({
+                "success": False,
+                "error": str(e),
+                "message": "Failed to query reconciliation invoice details"
             }),
             status=500,
             headers=DEFAULT_HEADERS
