@@ -11,7 +11,8 @@ Deployed endpoints:
 	- get_sales_summary_details_bq (asia-east1)
 	- salesSummaryDetailsProxy (asia-east1): compatibility alias for the sales summary UI
 	- get_sales_summary_order_details_bq (asia-east1)
-	- get_recon_summary_bq (asia-east1): stock-tracked order-selling-tracking rows by store and date range
+	- get_recon_summary_bq (asia-east1): invoice-level inventory exceptions by store and date range
+	- get_recon_invoice_details_bq (asia-east1): item-level sales/inventory details for one reconciliation invoice
 	- get_inventory_summary_bq (asia-east1): inventory-tracking rows by store and creation date range
 - Firestore → BigQuery Triggers
 	- sync_order_to_bigquery (asia-east1)
