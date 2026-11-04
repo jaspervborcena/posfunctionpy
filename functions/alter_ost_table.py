@@ -34,6 +34,7 @@ new_fields = [
     bigquery.SchemaField("tags",          "STRING",  mode="REPEATED"),
     bigquery.SchemaField("orderDetailsId", "STRING", mode="NULLABLE"),
     bigquery.SchemaField("uid",           "STRING",  mode="NULLABLE"),
+    bigquery.SchemaField("eventType",     "STRING",  mode="NULLABLE"),
 ]
 
 to_add = [f for f in new_fields if f.name not in existing]

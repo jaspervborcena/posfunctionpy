@@ -35,6 +35,7 @@ def create_ordersellingtracking_table():
         bigquery.SchemaField("createdBy", "STRING"),
         bigquery.SchemaField("orderId", "STRING"),
         bigquery.SchemaField("status", "STRING"),
+        bigquery.SchemaField("eventType", "STRING"),
         bigquery.SchemaField("storeId", "STRING"),
         bigquery.SchemaField("uid", "STRING"),
         bigquery.SchemaField("isStockTracked", "BOOLEAN"),

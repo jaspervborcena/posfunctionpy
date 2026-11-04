@@ -365,6 +365,7 @@ def get_sales_summary_bq(req: https_fn.Request) -> https_fn.Response:
                         SUM(discount) AS totalDiscount
                     FROM `%s`
                     WHERE storeId = @storeId
+                        AND COALESCE(status, '') != 'initial_stock'
                         AND updatedAt BETWEEN @startDate AND @endDate
                     GROUP BY status
                 ),
@@ -1238,6 +1239,7 @@ def get_sales_status_breakdown_bq(req: https_fn.Request) -> https_fn.Response:
           ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER(), 1) AS percentage
         FROM `%s`
         WHERE storeId = @store_id
+          AND COALESCE(status, '') != 'initial_stock'
           AND createdAt >= @start_timestamp
           AND createdAt < @end_timestamp
         GROUP BY status ORDER BY status

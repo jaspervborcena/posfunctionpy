@@ -108,6 +108,7 @@ def build_ost_payload(ost_id, d):
         "createdBy":                d.get("createdBy"),
         "discount":                 to_numeric(d.get("discount")),
         "discountType":             d.get("discountType"),
+        "eventType":                d.get("eventType"),
         "invoiceNumber":            d.get("invoiceNumber"),
         "isStockTracked":           bool(d.get("isStockTracked", False)),
         "isVatExempt":              bool(d.get("isVatExempt", False)),
